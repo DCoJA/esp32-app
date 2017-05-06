@@ -145,9 +145,9 @@ static void i2c_init()
     i2c_config_t conf;
     conf.mode = I2C_MODE_MASTER;
     conf.sda_io_num = I2C_MASTER_SDA_IO;
-    conf.sda_pullup_en = GPIO_PULLUP_DISABLE;
+    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
     conf.scl_io_num = I2C_MASTER_SCL_IO;
-    conf.scl_pullup_en = GPIO_PULLUP_DISABLE;
+    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
     conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
     i2c_param_config(i2c_master_port, &conf);
     i2c_driver_install(i2c_master_port, conf.mode,
@@ -160,6 +160,7 @@ struct ringbuf ubloxbuf;
 SemaphoreHandle_t ringbuf_sem;
 SemaphoreHandle_t send_sem;
 SemaphoreHandle_t ledc_sem;
+SemaphoreHandle_t i2c_sem;
 
 extern void baro_task(void *arg);
 extern void baro2_task(void *arg);
@@ -195,6 +196,7 @@ void app_main(void)
 
     vSemaphoreCreateBinary(send_sem);
     vSemaphoreCreateBinary(ledc_sem);
+    vSemaphoreCreateBinary(i2c_sem);
 
     // Initialize ring buffer
     vSemaphoreCreateBinary(ringbuf_sem);

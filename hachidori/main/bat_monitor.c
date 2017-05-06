@@ -27,6 +27,15 @@
 #include "battery.h"
 #include "pwm.h"
 
+/* battery monitor will try ina226 backend first.  If ina226 can't be
+   proved, then adc1 fallback will be tried.  */
+
+extern bool ina226_init(void);
+extern bool ina226_read_sample(float *curr, float *vbus);
+
+// ADC1 fallback assumes external voltage attenuator and ACS722
+// hall current sensor.
+
 #define ADC_VOLTAGE      ADC1_CHANNEL_0  // GPIO36 VP
 #define ADC_CURRENT      ADC1_CHANNEL_6  // GPIO34
 
@@ -78,17 +87,29 @@ static int maybe_low_voltage = 0;
 
 void bat_task(void *arg)
 {
+    enum { BM_INA226, BM_ADC1 } backend;
+
     while (sockfd < 0) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
-    adc1_init();
+    if (ina226_init() == true) {
+        backend = BM_INA226;
+        printf("ina226 detected on I2C\n");
+    } else {
+        adc1_init();
+        backend = BM_ADC1;
+    }
 
     // Check the initial battery voltage
     for (int i = 0; i < N_SMA; i++) {
-        vbat_open = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
+        if (backend == BM_INA226) {
+            ina226_read_sample(&cbat_open, &vbat_open);
+        } else {
+            vbat_open = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
+            cbat_open = current_scale(adc1_get_voltage(ADC_CURRENT));
+        }
         vbat_open = sma_filter(vbat_open, vmem, N_SMA);
-        cbat_open = current_scale(adc1_get_voltage(ADC_CURRENT));
         sma_filter(cbat_open, cmem, N_SMA);
     }
 
@@ -110,8 +131,13 @@ void bat_task(void *arg)
         }
         xLastWakeTime = xTaskGetTickCount();
 
-        float vf = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
-        float cf = current_scale(adc1_get_voltage(ADC_CURRENT));
+        float vf, cf;
+        if (backend == BM_INA226) {
+            ina226_read_sample(&cf, &vf);
+        } else {
+            vf = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
+            cf = current_scale(adc1_get_voltage(ADC_CURRENT));
+        }
         //printf("%7.3f %7.3f\n", vf, cf);
         vf = sma_filter(vf, vmem, N_SMA);
         cf = sma_filter(cf, cmem, N_SMA);

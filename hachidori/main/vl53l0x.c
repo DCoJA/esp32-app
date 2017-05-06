@@ -46,6 +46,8 @@
 
 #define RANGE_STATUS_OK                 0x0b
 
+extern SemaphoreHandle_t i2c_sem;
+
 // VL53L0X data are big endian
 #define uint16_val(v, idx)(((uint16_t)v[2*idx] << 8) | v[2*idx+1])
 
@@ -125,8 +127,10 @@ static uint32_t vcsel_period(uint8_t period)
   return (period + 1) << 1;
 }
 
-static void vl53l0x_init(void)
+static bool vl53l0x_init(void)
 {
+
+    xSemaphoreTake(i2c_sem, portMAX_DELAY);
 
     uint8_t mid = vl53l0x_read(VL53L0X_MODEL_ID);
     vTaskDelay(10/portTICK_PERIOD_MS);
@@ -136,7 +140,8 @@ static void vl53l0x_init(void)
 
     if (mid != VL53L0X_MID || rid != VL53L0X_RID) {
         printf("VL53L0X id values %02x %02x\n", mid, rid);
-        vTaskDelete(NULL);
+        xSemaphoreGive(i2c_sem);
+        return false;
     }
 
     uint8_t pre_range_config = vl53l0x_read(VL53L0X_PRE_RANGE_CONFIG);
@@ -146,13 +151,20 @@ static void vl53l0x_init(void)
 
     uint8_t ctrl = vl53l0x_read(VL53L0X_MSRC_CONFIG_CONTROL);
     vl53l0x_write(VL53L0X_MSRC_CONFIG_CONTROL, ctrl|0x12);
+    xSemaphoreGive(i2c_sem);
+
+    return true;
 }
 
 // Start messuring
 static void vl53l0x_start_messure(void)
 {
+    xSemaphoreTake(i2c_sem, portMAX_DELAY);
+
     // back to back mode
     vl53l0x_write(VL53L0X_SYSRANGE_START, 0x02);
+
+    xSemaphoreGive(i2c_sem);
 }
 
 // Read result
@@ -160,32 +172,37 @@ static bool vl53l0x_read_range(uint16_t *distance,
                                uint16_t *signal, uint16_t *ambient,
                                uint8_t *range_status)
 {
-    uint8_t buf[12];
+    xSemaphoreTake(i2c_sem, portMAX_DELAY);
+
     uint8_t status;
     status = vl53l0x_read(VL53L0X_RANGE_STATUS);
     //printf("status %02x\n", status);
     if ((status & 0x78) != 0x58) {
-      return false;
+        xSemaphoreGive(i2c_sem);
+        return false;
     }
     //vl53l0x_write(VL53L0X_INTERRUPT_CLEAR, 0x01);
 
+    uint8_t buf[12];
     if (!vl53l0x_readn(VL53L0X_RANGE_STATUS, buf, 12)) {
-      return false;
+        xSemaphoreGive(i2c_sem);
+        return false;
     }
 
     if (ambient) {
       *ambient = uint16_val(buf, 3);
     }
     if (signal) {
-      *signal = uint16_val(buf, 4);
+        *signal = uint16_val(buf, 4);
     }
     if (distance) {
-      *distance = uint16_val(buf, 5);
+        *distance = uint16_val(buf, 5);
     }
     if (range_status) {
-      *range_status = (buf[0] & 0x78) >> 3;
+        *range_status = (buf[0] & 0x78) >> 3;
     }
 
+    xSemaphoreGive(i2c_sem);
     return true;
 }
 
@@ -201,7 +218,10 @@ void rn_task(void *pvParameters)
     // ? Wait POR
     vTaskDelay(500/portTICK_PERIOD_MS);
 
-    vl53l0x_init();
+    if (!vl53l0x_init()) {
+        vTaskDelete(NULL);
+    }
+
     vTaskDelay(100/portTICK_PERIOD_MS);
 
     union { float f; uint8_t bytes[sizeof(float)];} nof;

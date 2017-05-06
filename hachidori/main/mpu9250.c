@@ -338,7 +338,7 @@ void imu_task(void *arg)
     uint8_t rv;
     rv = mpu9250_read(WHO_IM_I);
     if (rv != MPU9250_ID) {
-        printf("Wrong id: %02x\n", rv);
+        printf("MPU9250: Wrong id: %02x\n", rv);
     }
 
     uint8_t tries;
@@ -385,7 +385,7 @@ void imu_task(void *arg)
 
     rv = ak8963_read(AK8963_WIA);
     if (rv != AK8963_ID) {
-        printf("Wrong id: %02x\n", rv);
+        printf("AK8963: Wrong id: %02x\n", rv);
     }
 
     ak8963_start();
