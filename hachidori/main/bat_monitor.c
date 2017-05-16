@@ -83,6 +83,8 @@ extern SemaphoreHandle_t send_sem;
 
 float vbat_open, cbat_open;
 bool low_battery = false;
+uint32_t n_battery_cells;
+
 static int maybe_low_voltage = 0;
 
 void bat_task(void *arg)
@@ -113,7 +115,33 @@ void bat_task(void *arg)
         sma_filter(cbat_open, cmem, N_SMA);
     }
 
-    if (vbat_open < LOW_BATTERY_WM) {
+    if (vbat_open < BATTERY_MONITOR_HEALTH_LIMIT) {
+        // Means no healthy battery monitor
+        vbat_open = 0;
+        vTaskDelete(NULL);
+    }
+
+    // Try to detect battery type
+    uint32_t ncells = 0;
+#if defined(FORCED_BATTERY_CELLS)
+    ncells = FORCED_BATTERY_CELLS;
+#else
+    if (vbat_open < BATTERY_1S_LIMIT) {
+        ncells = 1;
+    } else if (vbat_open < BATTERY_2S_LIMIT) {
+        ncells = 2;
+    } else if (vbat_open < BATTERY_3S_LIMIT) {
+        ncells = 3;
+    } else if (vbat_open < BATTERY_4S_LIMIT) {
+        ncells = 4;
+    } else {
+        // Approximate number of cells
+        ncells = (int)(vbat_open / 3.7f);
+    }
+#endif
+
+    n_battery_cells = ncells;
+    if (vbat_open < LOW_BATTERY_WM(ncells)) {
         low_battery = true;
         vTaskDelay(4000 / portTICK_PERIOD_MS);
         pwm_shutdown();
@@ -142,7 +170,7 @@ void bat_task(void *arg)
         vf = sma_filter(vf, vmem, N_SMA);
         cf = sma_filter(cf, cmem, N_SMA);
 
-        if (pwm_stopped && vf < LOW_BATTERY_WM) {
+        if (pwm_stopped && vf < LOW_BATTERY_WM(ncells)) {
             // Continuous low voltage even if no motor current
             if (++maybe_low_voltage > 10) {
                 low_battery = true;

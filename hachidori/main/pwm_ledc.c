@@ -32,7 +32,8 @@
 #define LEDC_IO_2    (14)
 #define LEDC_IO_3    (27)
 
-//#define USE_ESC
+#define USE_ESC
+
 #if defined (USE_ESC)
 #define PWM_FREQ_HZ 400
 #define PWM_RESOLUTION LEDC_TIMER_12_BIT
@@ -79,6 +80,7 @@ void ledc_init(void)
     ledc_channel_config(&ledc_channel);
 }
 
+#if defined(USE_CURVE)
 static int16_t pl_map(uint16_t width)
 {
 #define NP 16
@@ -105,16 +107,18 @@ static int16_t pl_map(uint16_t width)
     //printf("index:%d ofs %7.3f\n", index, ofs);
     return map[index] + (uint16_t)(ofs * (map[index+1] - map[index]) + 0.1);
 }
+#endif
 
 extern float vbat_open;
+extern uint32_t n_battery_cells;
 
 static inline uint16_t scale(uint16_t width)
 {
     uint16_t rv = 0;
     if (PWM_RESOLUTION == LEDC_TIMER_11_BIT) {
-#if !defined (USE_ESC)
+#if !defined(USE_ESC)
         // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
-#if 1
+#if !defined(USE_CURVE)
         int32_t length = width - 1100;
         if (length < 0) {
             length = 0;
@@ -123,8 +127,7 @@ static inline uint16_t scale(uint16_t width)
             length = (length * 25) >> 3;
         }
 #else
-        // for 1S battery
-#define VBAT_TYP    4.0f
+#define VBAT_TYP    (BATTERY_CELL_TYP * n_battery_cells)
 #define VBAT_COMP_COEFF 500
 #define VBAT_COMP_LIMIT 100 
         int16_t length = pl_map(width);
@@ -218,6 +221,22 @@ void pwm_task(void *arg)
     ledc_init();
     xSemaphoreGive(ledc_sem);
 
+#ifdef USE_ESC
+    // wait 3 sec for esc start up
+    printf("wait 3 sec for esc start up\n");
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    uint16_t lowd[NUM_CHANNELS];
+    for (int i = 0; i < NUM_CHANNELS; i++) {
+        // write minimal stick data
+        lowd[i] = LO_WIDTH;
+    }
+    pwm_output(lowd);
+    // wait 6 sec for normal esc/motor start up
+    printf("wait 6 sec for normal esc/motor start up\n");
+    vTaskDelay(6000 / portTICK_PERIOD_MS);
+    pwm_shutdown();
+#endif
+
     struct B3packet pkt;
     TickType_t last_time = xTaskGetTickCount();
     while (1) {
@@ -226,12 +245,10 @@ void pwm_task(void *arg)
         if (n != sizeof(pkt) || pkt.head != B3HEADER)
             continue;
 
-#if 1
         if (low_battery) {
             printf("low_battery: stop pwm_task\n");
             vTaskDelete(NULL);
         }
-#endif
 
         if (pkt.tos == TOS_GPSCMD) {
             size_t len = pkt.data[0];

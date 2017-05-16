@@ -26,6 +26,29 @@
 
 esp_err_t event_handler(void *ctx, system_event_t *event)
 {
+    system_event_sta_disconnected_t *disconn;
+    wifi_mode_t mode;
+
+    switch(event->event_id) {
+    case SYSTEM_EVENT_STA_DISCONNECTED:
+        disconn = &event->event_info.disconnected;
+        switch (disconn->reason) {
+        case WIFI_REASON_AUTH_FAIL:
+            printf("WiFi: desconntcted after auth fail\r\n");
+            break;
+        default:
+            // try to reconnect
+            if (esp_wifi_get_mode(&mode) == ESP_OK) {
+                if (mode & WIFI_MODE_STA) {
+                    printf("WiFi: try to reconnect...\r\n");
+                    esp_wifi_connect();
+                }
+            }
+            break;
+        }
+    default:
+        break;
+    }
     return ESP_OK;
 }
 
@@ -99,31 +122,45 @@ static void spi_init(void)
         .mosi_io_num=PIN_NUM_MOSI,
         .sclk_io_num=PIN_NUM_CLK,
         .quadwp_io_num=-1,
-        .quadhd_io_num=-1
+        .quadhd_io_num=-1,
+        .max_transfer_sz=0
     };
     spi_device_interface_config_t devcfg={
+        .command_bits=0,
+        .address_bits=0,
+        .dummy_bits=0,
         .clock_speed_hz=400000,                 //Clock out at 400KHz
+        .duty_cycle_pos=128,
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS,               //CS pin
         .queue_size=1,                          //queue size
     };
     spi_device_interface_config_t devcfg_a={
+        .command_bits=0,
+        .address_bits=0,
+        .dummy_bits=0,
         .clock_speed_hz=1000000,                //Clock out at 1 MHz
+        .duty_cycle_pos=128,
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
         .queue_size=1,                          //queue size
     };
     spi_device_interface_config_t devcfg_m={
+        .command_bits=0,
+        .address_bits=0,
+        .dummy_bits=0,
         .clock_speed_hz=1000000,                //Clock out at 1 MHz
+        .duty_cycle_pos=128,
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_M,             //CS pin
         .queue_size=1,                          //queue size
     };
 
     //Initialize the SPI bus
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1);
+    // 10/05/2017: Currently DMA doesn't work for multiple devices.
+    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
     assert(ret==ESP_OK);
-    //Attach the BME280 to the SPI bus
+    //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);
     assert(ret==ESP_OK);
     ret=spi_bus_add_device(VSPI_HOST, &devcfg_a, &spi_a);
@@ -137,7 +174,7 @@ static void spi_init(void)
 #define I2C_MASTER_NUM                  I2C_NUM_0
 #define I2C_MASTER_TX_BUF_DISABLE       0
 #define I2C_MASTER_RX_BUF_DISABLE       0
-#define I2C_MASTER_FREQ_HZ              50000
+#define I2C_MASTER_FREQ_HZ              400000
 
 static void i2c_init()
 {
