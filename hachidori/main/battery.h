@@ -9,4 +9,6 @@
 #define BATTERY_3S_LIMIT 13.0f
 #define BATTERY_4S_LIMIT 17.5f
 
+#define BATTERY_CURRENT_LIMIT 10.0f
+
 extern bool low_battery;

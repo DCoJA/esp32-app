@@ -240,8 +240,8 @@ void rn_task(void *pvParameters)
         }
         xLastWakeTime = xTaskGetTickCount();
 
-        uint16_t d, sig, amb;
-        uint8_t st;
+        uint16_t d = 0, sig, amb;
+        uint8_t st = 0;
 
         union { float f; uint8_t bytes[sizeof(float)];} df;
         if (vl53l0x_read_range(&d, &sig, &amb, &st)

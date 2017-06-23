@@ -24,19 +24,31 @@
 
 #include "MadgwickAHRS.h"
 #include "kfacc.h"
+#include "adjust.h"
 
 #include "pwm.h"
 #include "battery.h"
+#include "rgbled.h"
+
+// Experimental
+//#undef FIXUP_ACCEL_DATA
 
 #if 1
-#define ROTATION_YAW	270
-//#define  ROTATION_YAW	0
+#define ROTATION_YAW	90
+//#define  ROTATION_YAW	270
 #endif
 
 // MPU9250
 #define MPU9250_ID      0x71
 
 // MPU9250 registers
+#define XG_OFFSET_H     0x13
+#define XG_OFFSET_L     0x14
+#define YG_OFFSET_H     0x15
+#define YG_OFFSET_L     0x16
+#define ZG_OFFSET_H     0x17
+#define ZG_OFFSET_L     0x18
+
 #define SMPLRT_DIV      0x19
 #define MPU_CONFIG      0x1A
 #define GYRO_CONFIG     0x1B
@@ -78,6 +90,13 @@
 
 #define WHO_IM_I        0x75
 
+#define XA_OFFSET_H     0x77
+#define XA_OFFSET_L     0x78
+#define YA_OFFSET_H     0x7A
+#define YA_OFFSET_L     0x7B
+#define ZA_OFFSET_H     0x7D
+#define ZA_OFFSET_L     0x7E
+
 // AK8963
 #define AK8963_I2C_ADDR 0x0c
 #define AK8963_ID       0x48
@@ -113,7 +132,7 @@ extern spi_device_handle_t spi_a;
 static uint8_t mpu9250_read(uint8_t reg)
 {
     esp_err_t ret;
-    spi_transaction_t trans;
+    static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.length=16;
     trans.tx_data[0] = reg | 0x80;
@@ -129,7 +148,7 @@ static uint8_t mpu9250_read(uint8_t reg)
 static bool mpu9250_write(uint8_t reg, uint8_t val)
 {
     esp_err_t ret;
-    spi_transaction_t trans;
+    static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.length=16;
     trans.tx_data[0] = reg & 0x7f;
@@ -339,6 +358,8 @@ void imu_task(void *arg)
     rv = mpu9250_read(WHO_IM_I);
     if (rv != MPU9250_ID) {
         printf("MPU9250: Wrong id: %02x\n", rv);
+        rgb_led_red = rgb_led_green = rgb_led_blue = 0;
+        vTaskDelete(NULL);
     }
 
     uint8_t tries;
@@ -357,6 +378,9 @@ void imu_task(void *arg)
         mpu9250_write(USER_CTRL, 0x10);
         vTaskDelay(100 / portTICK_PERIOD_MS);
 
+        // Enable master I2C access to AK8963
+        mpu9250_write(INT_PIN_CFG, 0x02);
+
         // Wake up with appropriate clock
         mpu9250_write(PWR_MGMT_1, 0x03);
         vTaskDelay(5 / portTICK_PERIOD_MS);
@@ -370,9 +394,18 @@ void imu_task(void *arg)
 
     if (tries == 5) {
         printf("Failed to boot MPU9250 5 times");
+        rgb_led_red = rgb_led_green = rgb_led_blue = 0;
+        vTaskDelete(NULL);
     }
 
     mpu9250_start();
+
+#if 1
+    mpu9250_write(XG_OFFSET_L, 39);
+    mpu9250_write(YG_OFFSET_L, 37);
+    mpu9250_write(ZG_OFFSET_H, 0xff);
+    mpu9250_write(ZG_OFFSET_L, 0xff&(-15));
+#endif
 
     // Configure slaves
     // Set I2C_MST_EN, MST_P_NSR and set bus speed to 400kHz
@@ -386,6 +419,8 @@ void imu_task(void *arg)
     rv = ak8963_read(AK8963_WIA);
     if (rv != AK8963_ID) {
         printf("AK8963: Wrong id: %02x\n", rv);
+        rgb_led_red = rgb_led_green = rgb_led_blue = 0;
+        vTaskDelete(NULL);
     }
 
     ak8963_start();
@@ -393,12 +428,15 @@ void imu_task(void *arg)
     ak8963_read_sample_start();
     vTaskDelay(10/portTICK_PERIOD_MS);
 
+    attitude_adjust_init();
+
     struct sample rx;
     struct ak_sample akrx;
     struct B3packet pkt;
     int count = 0;
-    int fscount = 0;
     float gx, gy, gz, ax, ay, az, mx, my, mz;
+    float filtz = GRAVITY_MSS;
+
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
         TickType_t lap = xTaskGetTickCount() - xLastWakeTime;
@@ -427,6 +465,14 @@ void imu_task(void *arg)
         ux.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
         uy.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
         uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+#elif (ROTATION_YAW == 90)
+        ux.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+        uy.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+#elif (ROTATION_YAW == 180)
+        ux.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+        uy.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
 #elif (ROTATION_YAW == 270)
         ux.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
         uy.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
@@ -434,6 +480,7 @@ void imu_task(void *arg)
 #else
 #error "bad ROTATION_YAW value"
 #endif
+
         ax = ux.f; ay = uy.f; az = uz.f;
         memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
         memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
@@ -441,6 +488,14 @@ void imu_task(void *arg)
 #if (ROTATION_YAW == 0)
         ux.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
         uy.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+#elif (ROTATION_YAW == 90)
+        ux.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+        uy.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+#elif (ROTATION_YAW == 180)
+        ux.f = -((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+        uy.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
         uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
 #elif (ROTATION_YAW == 270)
         ux.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
@@ -478,6 +533,14 @@ void imu_task(void *arg)
             ux.f = ((float)le16_val(akrx.d, 0)) * ak8963_calib[0];
             uy.f = ((float)le16_val(akrx.d, 1)) * ak8963_calib[1];
             uz.f = ((float)le16_val(akrx.d, 2)) * ak8963_calib[2];
+#elif (ROTATION_YAW == 90)
+            ux.f = -((float)le16_val(akrx.d, 1)) * ak8963_calib[0];
+            uy.f = ((float)le16_val(akrx.d, 0)) * ak8963_calib[1];
+            uz.f = ((float)le16_val(akrx.d, 2)) * ak8963_calib[2];
+#elif (ROTATION_YAW == 180)
+            ux.f = -((float)le16_val(akrx.d, 0)) * ak8963_calib[0];
+            uy.f = -((float)le16_val(akrx.d, 1)) * ak8963_calib[1];
+            uz.f = ((float)le16_val(akrx.d, 2)) * ak8963_calib[2];
 #elif (ROTATION_YAW == 270)
             ux.f = ((float)le16_val(akrx.d, 1)) * ak8963_calib[0];
             uy.f = -((float)le16_val(akrx.d, 0)) * ak8963_calib[1];
@@ -498,16 +561,15 @@ void imu_task(void *arg)
             }
             xSemaphoreGive(send_sem);
 
-#if 1
-            if (prepare_failsafe) {
-                beta = (fscount++ < 1000) ? 2.0f : 0.2f;
-                MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
-                KFACCupdate(ax, ay, az);
-            } else {
-                fscount = 0;
-            }
-            // DISARM on inversion
-            if (-az < -GRAVITY_MSS * 0.4) {
+            beta = (count++ < 1000) ? 2.0f : 0.2f;
+            MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+            KFACCupdate(ax, ay, az);
+            attitude_adjust_compute();
+
+            // DISARM on inversion or crash
+            filtz = 0.9 * filtz + 0.1 * (-az);
+            //printf("filtz %7.3f\n", filtz);
+            if (filtz < GRAVITY_MSS * 0.6) {
                 if(++maybe_inverted > INVERSION_WM) {
                     if (in_arm) {
                         in_arm = false;
@@ -528,7 +590,6 @@ void imu_task(void *arg)
             } else {
                 maybe_landed = false;
             }
-#endif
         }
     }
 }

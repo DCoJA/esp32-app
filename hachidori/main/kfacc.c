@@ -21,8 +21,8 @@ void KFACCupdate(float b, float c, float d)
     // vertical accelaration
     x = q0*(d*q0 + c*q1 - b*q2) + q1*(c*q0 - d*q1 + b*q3)
         - q2*(b*q0 + d*q2 - c*q3) - q3*(- b*q1 - c*q2 - d*q3);
-    // adjust orientation
-    x = -x - GRAVITY_MSS;
+
+    x = x - GRAVITY_MSS;
 
     xhatm = xhat;
     Pm = P + Q;

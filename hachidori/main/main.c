@@ -24,6 +24,8 @@
 
 #include "ringbuf.h"
 
+#include "rgbled.h"
+
 esp_err_t event_handler(void *ctx, system_event_t *event)
 {
     system_event_sta_disconnected_t *disconn;
@@ -112,7 +114,6 @@ spi_device_handle_t spi_baro, spi_a, spi_m;
 #define PIN_NUM_CLK  18
 #define PIN_NUM_CS    5
 #define PIN_NUM_CS_A 21
-#define PIN_NUM_CS_M 22
 
 static void spi_init(void)
 {
@@ -145,27 +146,15 @@ static void spi_init(void)
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
         .queue_size=1,                          //queue size
     };
-    spi_device_interface_config_t devcfg_m={
-        .command_bits=0,
-        .address_bits=0,
-        .dummy_bits=0,
-        .clock_speed_hz=1000000,                //Clock out at 1 MHz
-        .duty_cycle_pos=128,
-        .mode=0,                                //SPI mode 0
-        .spics_io_num=PIN_NUM_CS_M,             //CS pin
-        .queue_size=1,                          //queue size
-    };
 
     //Initialize the SPI bus
-    // 10/05/2017: Currently DMA doesn't work for multiple devices.
+    // 10/05/2017: Currently DMA doesn't work
     ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
     assert(ret==ESP_OK);
     //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);
     assert(ret==ESP_OK);
     ret=spi_bus_add_device(VSPI_HOST, &devcfg_a, &spi_a);
-    assert(ret==ESP_OK);
-    ret=spi_bus_add_device(VSPI_HOST, &devcfg_m, &spi_m);
     assert(ret==ESP_OK);
 }
 
@@ -198,6 +187,10 @@ SemaphoreHandle_t ringbuf_sem;
 SemaphoreHandle_t send_sem;
 SemaphoreHandle_t ledc_sem;
 SemaphoreHandle_t i2c_sem;
+
+volatile uint8_t rgb_led_red;
+volatile uint8_t rgb_led_green;
+volatile uint8_t rgb_led_blue;
 
 extern void baro_task(void *arg);
 extern void baro2_task(void *arg);
@@ -250,12 +243,42 @@ void app_main(void)
     xTaskCreate(fs_task, "fs_task", 2048, NULL, 5, NULL);
 
 #if 1
-    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
-    int level = 0;
+    gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = ((1<<GPIO_LED_RED)|(1<<GPIO_LED_GREEN)
+                            |(1<<GPIO_LED_BLUE));
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1<<GPIO_NUM_22);
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    gpio_set_level(GPIO_LED_RED, 0);
+    gpio_set_level(GPIO_LED_GREEN, 0);
+    gpio_set_level(GPIO_LED_BLUE, 0);
+
+    rgb_led_green = 1;
+
+    uint8_t red = 0, green = 0, blue = 0;
     while (true) {
-        gpio_set_level(GPIO_NUM_2, level);
-        level = !level;
-        vTaskDelay(300 / portTICK_PERIOD_MS);
+        if (red != rgb_led_red) {
+            red = rgb_led_red;
+            gpio_set_level(GPIO_LED_RED, red);
+        }
+        if (green != rgb_led_green) {
+            green = rgb_led_green;
+            gpio_set_level(GPIO_LED_GREEN, green);
+        }
+        if (blue != rgb_led_blue) {
+            blue = rgb_led_blue;
+            gpio_set_level(GPIO_LED_BLUE, blue);
+        }
+        vTaskDelay(200 / portTICK_PERIOD_MS);
     }
 #else
     while (true) {

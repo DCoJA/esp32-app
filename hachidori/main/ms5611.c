@@ -42,7 +42,7 @@ extern spi_device_handle_t spi_baro;
 static esp_err_t baro_cmd(uint8_t reg)
 {
     esp_err_t ret;
-    spi_transaction_t trans;
+    static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.length=8;
     trans.tx_data[0] = reg;

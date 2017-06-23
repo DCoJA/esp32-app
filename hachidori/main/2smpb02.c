@@ -103,7 +103,7 @@ extern spi_device_handle_t spi_baro;
 static esp_err_t baro_write(uint8_t reg, uint8_t val)
 {
     esp_err_t ret;
-    spi_transaction_t trans;
+    static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.length=16;
     trans.tx_data[0] = reg & 0x7f;

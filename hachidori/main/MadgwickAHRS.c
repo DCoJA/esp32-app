@@ -35,7 +35,7 @@ Sqrt (float x)
 
 volatile float beta = betaDef;	// 2 * proportional gain (Kp)
 // quaternion of sensor frame relative to auxiliary frame
-volatile float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
+volatile float q0 = 0.0f, q1 = 1.0f, q2 = 0.0f, q3 = 0.0f;
 
 void
 MadgwickAHRSupdate (float gx, float gy, float gz,

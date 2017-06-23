@@ -1,5 +1,8 @@
 // pwm definitions and globals
 
+// Define when ESC is used
+#define USE_ESC
+
 #define NUM_CHANNELS 4
 
 #define MIN_WIDTH 800

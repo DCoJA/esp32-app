@@ -26,20 +26,23 @@
 #include "pwm.h"
 #include "battery.h"
 #include "ringbuf.h"
+#include "rgbled.h"
+
+#include "adjust.h"
 
 #define LEDC_IO_0    (13)
 #define LEDC_IO_1    (12)
 #define LEDC_IO_2    (14)
 #define LEDC_IO_3    (27)
 
-#define USE_ESC
-
-#if defined (USE_ESC)
+#if defined(USE_ESC)
 #define PWM_FREQ_HZ 400
 #define PWM_RESOLUTION LEDC_TIMER_12_BIT
+#define PWM_UPDATE_LIMIT 5
 #else
 #define PWM_FREQ_HZ 20000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
+#define PWM_UPDATE_LIMIT 2
 #endif
 
 void ledc_init(void)
@@ -112,9 +115,42 @@ static int16_t pl_map(uint16_t width)
 extern float vbat_open;
 extern uint32_t n_battery_cells;
 
-static inline uint16_t scale(uint16_t width)
+static uint16_t vtune(uint16_t width)
+{
+    // No battery monitor, no tune
+    if (n_battery_cells == 0) {
+        return width;
+    }
+#if !defined(ESC_ADJUST_THRUST_WITH_VOLTAGE)
+    // Thrust will be propotinal to (vbat/(cell_typ * ncell))^2.
+    // Approx with 2*(vbat-vtyp)/(4.0*ncell) and adjust width [1100,1900]
+    // with it.
+#define VBAT_TYP    (BATTERY_CELL_TYP * n_battery_cells)
+#define VBAT_COMP_COEFF (2 * (HI_WIDTH-LO_WIDTH) / VBAT_TYP)
+#define VBAT_COMP_LIMIT 100
+    int16_t addend = (int16_t)((VBAT_TYP - vbat_open) * VBAT_COMP_COEFF);
+    if (addend > VBAT_COMP_LIMIT) {
+        addend = VBAT_COMP_LIMIT;
+    } else if (addend < -VBAT_COMP_LIMIT) {
+        addend = -VBAT_COMP_LIMIT;
+    }
+    //printf("%d %d\n", addend, (int16_t)VBAT_COMP_COEFF);
+    width += addend;
+    if (width > HI_WIDTH) {
+        width = HI_WIDTH;
+    } else if (width < LO_WIDTH) {
+        width = LO_WIDTH;
+    }
+#endif
+    return width;
+}
+
+static uint16_t scale(uint16_t width)
 {
     uint16_t rv = 0;
+
+    width = vtune(width);
+
     if (PWM_RESOLUTION == LEDC_TIMER_11_BIT) {
 #if !defined(USE_ESC)
         // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
@@ -127,17 +163,7 @@ static inline uint16_t scale(uint16_t width)
             length = (length * 25) >> 3;
         }
 #else
-#define VBAT_TYP    (BATTERY_CELL_TYP * n_battery_cells)
-#define VBAT_COMP_COEFF 500
-#define VBAT_COMP_LIMIT 100 
         int16_t length = pl_map(width);
-        int16_t addend = (int16_t)((VBAT_TYP - vbat_open) * VBAT_COMP_COEFF);
-        if (addend > VBAT_COMP_LIMIT) {
-            addend = VBAT_COMP_LIMIT;
-        } else if (addend < -VBAT_COMP_LIMIT) {
-            addend = -VBAT_COMP_LIMIT;
-        }
-        length += addend;
 #endif
         if (length > 2500) {
             length = 2500;
@@ -178,14 +204,20 @@ uint32_t pwm_count = 0;
 float last_width[NUM_CHANNELS];
 bool pwm_stopped = false;
 
+// Stop motors.  For ESC, send the low stick value instead of 0.
 void pwm_shutdown(void)
 {
+#if defined(USE_ESC)
+    uint16_t low = LO_WIDTH;
+#else
+    uint16_t low = 0;
+#endif
     //printf("pwm_shutdown\n");
     xSemaphoreTake(ledc_sem, portMAX_DELAY);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, 0);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 0);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2, 0);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3, 0);
+    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, low);
+    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, low);
+    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2, low);
+    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3, low);
     ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
     ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
     ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2);
@@ -196,7 +228,7 @@ void pwm_shutdown(void)
 
 void pwm_output(uint16_t *wd)
 {
-    //printf("pwm_output\n");
+    //printf("pwm_output %d %d %d %d\n", wd[0], wd[1], wd[2], wd[3]);
     xSemaphoreTake(ledc_sem, portMAX_DELAY);
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, scale(wd[0]));
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, scale(wd[1]));
@@ -211,8 +243,20 @@ void pwm_output(uint16_t *wd)
                    && wd[2] <= LO_WIDTH && wd[3] <= LO_WIDTH);
 }
 
+// RCOut RGB LED channels
+#define PWM_RED   13
+#define PWM_GREEN 14
+#define PWM_BLUE  15
+
 void pwm_task(void *arg)
 {
+    in_arm = false;
+    pwm_count = 0;
+    pwm_stopped = false;
+    for (int i = 0; i < NUM_CHANNELS; i++) {
+        last_width[i] = LO_WIDTH;
+    }
+
     while (sockfd < 0) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
@@ -221,20 +265,15 @@ void pwm_task(void *arg)
     ledc_init();
     xSemaphoreGive(ledc_sem);
 
-#ifdef USE_ESC
+#if defined(USE_ESC)
     // wait 3 sec for esc start up
     printf("wait 3 sec for esc start up\n");
     vTaskDelay(3000 / portTICK_PERIOD_MS);
-    uint16_t lowd[NUM_CHANNELS];
-    for (int i = 0; i < NUM_CHANNELS; i++) {
-        // write minimal stick data
-        lowd[i] = LO_WIDTH;
-    }
-    pwm_output(lowd);
+    // write minimal stick data
+    pwm_shutdown();
     // wait 6 sec for normal esc/motor start up
     printf("wait 6 sec for normal esc/motor start up\n");
     vTaskDelay(6000 / portTICK_PERIOD_MS);
-    pwm_shutdown();
 #endif
 
     struct B3packet pkt;
@@ -264,6 +303,10 @@ void pwm_task(void *arg)
             continue;
         }
 
+        rgb_led_red = (ube16_val(pkt.data, PWM_RED) ? 1 : 0);
+        rgb_led_green = (ube16_val(pkt.data, PWM_GREEN) ? 1 : 0);
+        rgb_led_blue = (ube16_val(pkt.data, PWM_BLUE) ? 1 : 0);
+
         if (!in_arm) {
             // Set in_arm when we get the first pwm packet.
             if (pwm_count == 0) {
@@ -279,18 +322,23 @@ void pwm_task(void *arg)
 
         // skip output so as not to update ledc too frequently
         TickType_t current_time = xTaskGetTickCount();
-        if ((uint32_t)(current_time - last_time) <= 2) {
+        if ((uint32_t)(current_time - last_time) <= PWM_UPDATE_LIMIT) {
             last_time = current_time;
             continue;
         } else {
             last_time = current_time;
         }
 
+#if 0
+        float adjust[4];
+        attitude_adjust_get(adjust);
+#endif
+
         uint16_t wd[NUM_CHANNELS];
         for (int i = 0; i < NUM_CHANNELS; i++) {
             uint16_t width = ube16_val(pkt.data, i);
             wd[i] = width;
-            last_width[i] = (float)width;
+            last_width[i] = (float)(width);
         }
 
         pwm_output(wd);

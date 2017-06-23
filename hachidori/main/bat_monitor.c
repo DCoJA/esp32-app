@@ -26,6 +26,7 @@
 
 #include "battery.h"
 #include "pwm.h"
+#include "rgbled.h"
 
 /* battery monitor will try ina226 backend first.  If ina226 can't be
    proved, then adc1 fallback will be tried.  */
@@ -169,6 +170,14 @@ void bat_task(void *arg)
         //printf("%7.3f %7.3f\n", vf, cf);
         vf = sma_filter(vf, vmem, N_SMA);
         cf = sma_filter(cf, cmem, N_SMA);
+
+        if (cf >= BATTERY_CURRENT_LIMIT) {
+            pwm_shutdown();
+            printf("high_current (%7.3f): try to shutdown\n", cf);
+            rgb_led_red = 1;
+            rgb_led_green = rgb_led_blue = 0;
+            continue;
+        }
 
         if (pwm_stopped && vf < LOW_BATTERY_WM(ncells)) {
             // Continuous low voltage even if no motor current
