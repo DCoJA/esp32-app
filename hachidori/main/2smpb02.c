@@ -119,6 +119,9 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
     esp_err_t ret;
     spi_transaction_t trans;
     uint8_t *rbuf = pvPortMallocCaps(len, MALLOC_CAP_DMA);
+    if (rbuf == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.command = reg | 0x80;
     trans.rxlength = 8*len;
