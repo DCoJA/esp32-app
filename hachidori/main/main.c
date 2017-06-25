@@ -127,7 +127,7 @@ static void spi_init(void)
         .max_transfer_sz=0
     };
     spi_device_interface_config_t devcfg={
-        .command_bits=0,
+        .command_bits=8,
         .address_bits=0,
         .dummy_bits=0,
         .clock_speed_hz=400000,                 //Clock out at 400KHz
@@ -135,9 +135,10 @@ static void spi_init(void)
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS,               //CS pin
         .queue_size=1,                          //queue size
+        .flags=SPI_DEVICE_HALFDUPLEX,
     };
     spi_device_interface_config_t devcfg_a={
-        .command_bits=0,
+        .command_bits=8,
         .address_bits=0,
         .dummy_bits=0,
         .clock_speed_hz=1000000,                //Clock out at 1 MHz
@@ -145,11 +146,11 @@ static void spi_init(void)
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
         .queue_size=1,                          //queue size
+        .flags=SPI_DEVICE_HALFDUPLEX,
     };
 
     //Initialize the SPI bus
-    // 10/05/2017: Currently DMA doesn't work
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
+    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1);
     assert(ret==ESP_OK);
     //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);

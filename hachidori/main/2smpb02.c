@@ -105,12 +105,12 @@ static esp_err_t baro_write(uint8_t reg, uint8_t val)
     esp_err_t ret;
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.length=16;
-    trans.tx_data[0] = reg & 0x7f;
-    trans.tx_data[1] = val;
-    trans.flags=SPI_TRANS_USE_TXDATA;
+    trans.length = 8;
+    trans.command = reg & 0x7f;
+    trans.tx_data[0] = val;
+    trans.flags = SPI_TRANS_USE_TXDATA;
     //printf("do transfer\n");
-    ret=spi_device_transmit(spi_baro, &trans);
+    ret = spi_device_transmit(spi_baro, &trans);
     return ret;
 }
 
@@ -118,23 +118,20 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
 {
     esp_err_t ret;
     spi_transaction_t trans;
-    uint8_t *tbuf = pvPortMallocCaps(len + 1, MALLOC_CAP_DMA);
-    uint8_t *rbuf = pvPortMallocCaps(len + 1, MALLOC_CAP_DMA);
-    tbuf[0] = reg | 0x80;
+    uint8_t *rbuf = pvPortMallocCaps(len, MALLOC_CAP_DMA);
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.length = 8 + 8*len;
-    trans.tx_buffer = tbuf;
+    trans.command = reg | 0x80;
+    trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
     trans.flags=0;
     //printf("do transfer\n");
     //Queue all transactions.
-    ret=spi_device_transmit(spi_baro, &trans);
-    free(tbuf);
-    if (ret!=ESP_OK) {
+    ret = spi_device_transmit(spi_baro, &trans);
+    if (ret != ESP_OK) {
         free(rbuf);
         return ret;
     }
-    memcpy(buf, rbuf+1, len);
+    memcpy(buf, rbuf, len);
     free(rbuf);
     return ret;
 }

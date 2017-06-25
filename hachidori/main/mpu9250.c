@@ -134,58 +134,52 @@ static uint8_t mpu9250_read(uint8_t reg)
     esp_err_t ret;
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.length=16;
-    trans.tx_data[0] = reg | 0x80;
-    trans.tx_data[1] = 0x00;
-    trans.flags=SPI_TRANS_USE_TXDATA|SPI_TRANS_USE_RXDATA;
+    trans.rxlength = 8;
+    trans.command = reg | 0x80;
+    trans.flags = SPI_TRANS_USE_RXDATA;
     //printf("do transfer\n");
-    ret=spi_device_transmit(spi_a, &trans);
-    assert(ret==ESP_OK);
+    ret = spi_device_transmit(spi_a, &trans);
+    assert(ret == ESP_OK);
 
-    return trans.rx_data[1];
+    return trans.rx_data[0];
 }
 
-static bool mpu9250_write(uint8_t reg, uint8_t val)
+static esp_err_t mpu9250_write(uint8_t reg, uint8_t val)
 {
     esp_err_t ret;
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.length=16;
-    trans.tx_data[0] = reg & 0x7f;
-    trans.tx_data[1] = val;
-    trans.flags=SPI_TRANS_USE_TXDATA;
+    trans.length = 8;
+    trans.command = reg & 0x7f;
+    trans.tx_data[0] = val;
+    trans.flags = SPI_TRANS_USE_TXDATA;
     //printf("do transfer\n");
-    ret=spi_device_transmit(spi_a, &trans);
-    if (ret!=ESP_OK) {
-        return false;
-    }
-    return true;
+    ret = spi_device_transmit(spi_a, &trans);
+    return ret;
 }
 
-static bool mpu9250_readn(uint8_t reg, uint8_t *buf, size_t len)
+static esp_err_t mpu9250_readn(uint8_t reg, uint8_t *buf, size_t len)
 {
     esp_err_t ret;
     spi_transaction_t trans;
-    uint8_t *tbuf = pvPortMallocCaps(len + 1, MALLOC_CAP_DMA);
-    uint8_t *rbuf = pvPortMallocCaps(len + 1, MALLOC_CAP_DMA);
-    tbuf[0] = reg | 0x80;
-    memset(&tbuf[1], 0, len);
+    uint8_t *rbuf = pvPortMallocCaps(len, MALLOC_CAP_DMA);
+    if (rbuf == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.length = 8 + 8*len;
-    trans.tx_buffer = tbuf;
+    trans.command = reg | 0x80;
+    trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
-    trans.flags=0;
     //printf("do transfer\n");
     //Queue all transactions.
-    ret=spi_device_transmit(spi_a, &trans);
-    free(tbuf);
-    if (ret!=ESP_OK) {
+    ret = spi_device_transmit(spi_a, &trans);
+    if (ret != ESP_OK) {
         free(rbuf);
-        return false;
+        return ret;
     }
-    memcpy(buf, rbuf+1, len);
+    memcpy(buf, rbuf, len);
     free(rbuf);
-    return true;
+    return ret;
 }
 
 static bool mpu9250_ready(void)
@@ -201,7 +195,9 @@ struct sample {
 
 static bool mpu9250_read_sample(struct sample *rx)
 {
-    return (mpu9250_readn(INT_STATUS, (uint8_t *)rx, sizeof(struct sample)));
+    esp_err_t rv;
+    rv = mpu9250_readn(INT_STATUS, (uint8_t *)rx, sizeof(struct sample));
+    return (rv == ESP_OK);
 }
 
 static void mpu9250_start(void)
@@ -288,12 +284,12 @@ static void ak8963_read_sample_start(void)
 
 static bool ak8963_read_sample(struct ak_sample *rx)
 {
-    bool rv;
+    esp_err_t rv;
     rv = mpu9250_readn(EXT_SENS_DATA_00, (uint8_t *)rx,
                        sizeof(struct ak_sample));
 
     mpu9250_write(I2C_SLV0_CTRL, 0);
-    return rv;
+    return (rv == ESP_OK);
 }
 
 struct ak_asa {
@@ -305,10 +301,10 @@ static bool ak8963_read_asa(struct ak_asa *rx)
     slv0_readn(AK8963_ASAX, 3);
     vTaskDelay(10 / portTICK_PERIOD_MS);
 
-    bool rv;
+    esp_err_t rv;
     rv = mpu9250_readn(EXT_SENS_DATA_00, (uint8_t *)rx, sizeof(struct ak_asa));
-    if (rv != true) {
-        return rv;
+    if (rv != ESP_OK) {
+        return false;
     }
 
     mpu9250_write(I2C_SLV0_CTRL, 0);
