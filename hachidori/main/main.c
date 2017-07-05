@@ -9,7 +9,9 @@
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
+#include "esp_partition.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/i2c.h"
@@ -166,7 +168,7 @@ static void spi_init(void)
 #define I2C_MASTER_RX_BUF_DISABLE       0
 #define I2C_MASTER_FREQ_HZ              400000
 
-static void i2c_init()
+static void i2c_init(void)
 {
     int i2c_master_port = I2C_MASTER_NUM;
     i2c_config_t conf;
@@ -182,12 +184,29 @@ static void i2c_init()
                        0);
 }
 
+static void nvs_init(void)
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // NVS partition was truncated and needs to be erased
+        const esp_partition_t *pa;
+        pa = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                      ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        assert(pa && "partition table must have an NVS partition");
+        ESP_ERROR_CHECK(esp_partition_erase_range(pa, 0, pa->size));
+        // Retry nvs_flash_init
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(err);
+}
+
 struct ringbuf ubloxbuf;
 
 SemaphoreHandle_t ringbuf_sem;
 SemaphoreHandle_t send_sem;
 SemaphoreHandle_t ledc_sem;
 SemaphoreHandle_t i2c_sem;
+SemaphoreHandle_t nvs_sem;
 
 volatile uint8_t rgb_led_red;
 volatile uint8_t rgb_led_green;
@@ -224,10 +243,12 @@ void app_main(void)
 
     spi_init();
     i2c_init();
+    nvs_init();
 
     vSemaphoreCreateBinary(send_sem);
     vSemaphoreCreateBinary(ledc_sem);
     vSemaphoreCreateBinary(i2c_sem);
+    vSemaphoreCreateBinary(nvs_sem);
 
     // Initialize ring buffer
     vSemaphoreCreateBinary(ringbuf_sem);

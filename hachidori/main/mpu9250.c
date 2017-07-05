@@ -10,7 +10,7 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "soc/gpio_struct.h"
@@ -31,7 +31,7 @@
 #include "rgbled.h"
 
 // Experimental
-//#undef FIXUP_ACCEL_DATA
+//#undef FIXUP_INS_OFFSET
 
 #if 1
 #define ROTATION_YAW	90
@@ -53,6 +53,7 @@
 #define MPU_CONFIG      0x1A
 #define GYRO_CONFIG     0x1B
 #define ACCEL_CONFIG    0x1C
+#define ACCEL_CONFIG2   0x1D
 
 #define I2C_MST_CTRL    0x24
 #define I2C_SLV0_ADDR   0x25
@@ -205,8 +206,8 @@ static void mpu9250_start(void)
     mpu9250_write(PWR_MGMT_2, 0);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
-    // No LPF
-    mpu9250_write(MPU_CONFIG, 0);
+    // Set LPF to 184Hz
+    mpu9250_write(MPU_CONFIG, 1);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
     // Sample rate 1000Hz
@@ -219,6 +220,10 @@ static void mpu9250_start(void)
 
     // Accel full scale 16g
     mpu9250_write(ACCEL_CONFIG, 3<<3);
+    vTaskDelay(1/portTICK_PERIOD_MS);
+
+    // Set LPF to 218Hz BW
+    mpu9250_write(ACCEL_CONFIG2, 1);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
     // INT enable on RDY
@@ -338,6 +343,7 @@ static void ak8963_start(void)
 
 extern int sockfd;
 extern SemaphoreHandle_t send_sem;
+extern SemaphoreHandle_t nvs_sem;
 
 #if 1
 static int maybe_inverted;
@@ -396,11 +402,38 @@ void imu_task(void *arg)
 
     mpu9250_start();
 
-#if 1
-    mpu9250_write(XG_OFFSET_L, 39);
-    mpu9250_write(YG_OFFSET_L, 37);
-    mpu9250_write(ZG_OFFSET_H, 0xff);
-    mpu9250_write(ZG_OFFSET_L, 0xff&(-15));
+#if defined(FIXUP_INS_OFFSET)
+    nvs_handle storage_handle;
+    esp_err_t err;
+    int xg_offset = 0, yg_offset = 0, zg_offset = 0;
+
+    xSemaphoreTake(nvs_sem, portMAX_DELAY);
+    err = nvs_open("storage", NVS_READONLY, &storage_handle);
+    if (err != ESP_OK) {
+        printf("NVS can't be opened (%d)\n", err);
+    } else {
+        // Try to look preset offsets
+        err = nvs_get_i32(storage_handle, "xg_offset", &xg_offset);
+        if (err == ESP_OK) {
+            printf("xg_offset = %d\n", xg_offset);
+            mpu9250_write(XG_OFFSET_H, (xg_offset >> 8) & 0xff);
+            mpu9250_write(XG_OFFSET_L, xg_offset & 0xff);
+        }
+        err = nvs_get_i32(storage_handle, "yg_offset", &yg_offset);
+        if (err == ESP_OK) {
+            printf("yg_offset = %d\n", yg_offset);
+            mpu9250_write(YG_OFFSET_H, (yg_offset >> 8) & 0xff);
+            mpu9250_write(YG_OFFSET_L, yg_offset & 0xff);
+        }
+        err = nvs_get_i32(storage_handle, "zg_offset", &zg_offset);
+        if (err == ESP_OK) {
+            printf("zg_offset = %d\n", zg_offset);
+            mpu9250_write(ZG_OFFSET_H, (zg_offset >> 8) & 0xff);
+            mpu9250_write(ZG_OFFSET_L, zg_offset & 0xff);
+        }
+        nvs_close(storage_handle);
+    }
+    xSemaphoreGive(nvs_sem);
 #endif
 
     // Configure slaves

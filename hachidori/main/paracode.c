@@ -10,7 +10,7 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "nvs_flash.h"
+#include "nvs.h"
 
 #include "pwm.h"
 #include "battery.h"

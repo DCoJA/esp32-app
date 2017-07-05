@@ -40,7 +40,7 @@
 #define PWM_RESOLUTION LEDC_TIMER_12_BIT
 #define PWM_UPDATE_LIMIT 5
 #else
-#define PWM_FREQ_HZ 20000
+#define PWM_FREQ_HZ 8000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
 #define PWM_UPDATE_LIMIT 2
 #endif
@@ -134,6 +134,8 @@ static uint16_t vtune(uint16_t width)
     } else if (addend < -VBAT_COMP_LIMIT) {
         addend = -VBAT_COMP_LIMIT;
     }
+    // Null fixup for LO_WIDTH, x1.0 for mid width and x2.0 for HI_WIDTH
+    addend = addend * (((float)(width - LO_WIDTH)) / ((HI_WIDTH-LO_WIDTH) / 2));
     //printf("%d %d\n", addend, (int16_t)VBAT_COMP_COEFF);
     width += addend;
     if (width > HI_WIDTH) {

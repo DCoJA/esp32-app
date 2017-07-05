@@ -11,7 +11,7 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/gpio.h"
 #ifdef I2C_2SMPB02
 #include "driver/i2c.h"
