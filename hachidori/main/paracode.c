@@ -133,9 +133,7 @@ void fs_task(void *pvParameters)
 
         // Don't spin if already stopped
         if (stick < LO_WIDTH + 0.5f) {
-            if (count == 1) {
-                fs_disarm();
-            }
+            fs_disarm();
             continue;
         }
 
