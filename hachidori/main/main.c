@@ -204,7 +204,7 @@ struct ringbuf ubloxbuf;
 
 SemaphoreHandle_t ringbuf_sem;
 SemaphoreHandle_t send_sem;
-SemaphoreHandle_t ledc_sem;
+SemaphoreHandle_t pwm_sem;
 SemaphoreHandle_t i2c_sem;
 SemaphoreHandle_t nvs_sem;
 
@@ -246,7 +246,7 @@ void app_main(void)
     nvs_init();
 
     vSemaphoreCreateBinary(send_sem);
-    vSemaphoreCreateBinary(ledc_sem);
+    vSemaphoreCreateBinary(pwm_sem);
     vSemaphoreCreateBinary(i2c_sem);
     vSemaphoreCreateBinary(nvs_sem);
 

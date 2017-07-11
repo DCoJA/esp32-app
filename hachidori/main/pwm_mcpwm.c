@@ -1,6 +1,5 @@
 /// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 
-#if defined(USE_PWM_LEDC)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +14,9 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "driver/ledc.h"
+#include "driver/mcpwm.h"
+#include "soc/mcpwm_reg.h"
+#include "soc/mcpwm_struct.h"
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -31,57 +32,33 @@
 
 #include "adjust.h"
 
-#define LEDC_IO_0    (13)
-#define LEDC_IO_1    (12)
-#define LEDC_IO_2    (14)
-#define LEDC_IO_3    (27)
+#define MCPWM_IO_0   (13)
+#define MCPWM_IO_1   (12)
+#define MCPWM_IO_2   (14)
+#define MCPWM_IO_3   (27)
 
 #if defined(USE_ESC)
 #define PWM_FREQ_HZ 400
-#define PWM_RESOLUTION LEDC_TIMER_12_BIT
-#define PWM_UPDATE_LIMIT 5
 #else
 #define PWM_FREQ_HZ 8000
-#define PWM_RESOLUTION LEDC_TIMER_11_BIT
-#define PWM_UPDATE_LIMIT 2
 #endif
+#define PWM_UPDATE_LIMIT 2
 
-void ledc_init(void)
+void pwm_init(void)
 {
-    ledc_timer_config_t ledc_timer = {
-        //set timer counter bit number
-        .bit_num = PWM_RESOLUTION,
-        //set frequency of pwm
-        .freq_hz = PWM_FREQ_HZ,
-        //timer mode,
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        //timer index
-        .timer_num = LEDC_TIMER_0
-    };
-    ledc_timer_config(&ledc_timer);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, MCPWM_IO_0);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, MCPWM_IO_1);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM1A, MCPWM_IO_2);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM1B, MCPWM_IO_3);
 
-    ledc_channel_config_t ledc_channel = {
-        .channel = LEDC_CHANNEL_0,
-        .duty = 0,
-        .gpio_num = LEDC_IO_0,
-        .intr_type = LEDC_INTR_DISABLE,
-        .speed_mode = LEDC_HIGH_SPEED_MODE,
-        .timer_sel = LEDC_TIMER_0
-    };
-    ledc_channel_config(&ledc_channel);
-
-    //config ledc channel1
-    ledc_channel.channel = LEDC_CHANNEL_1;
-    ledc_channel.gpio_num = LEDC_IO_1;
-    ledc_channel_config(&ledc_channel);
-    //config ledc channel2
-    ledc_channel.channel = LEDC_CHANNEL_2;
-    ledc_channel.gpio_num = LEDC_IO_2;
-    ledc_channel_config(&ledc_channel);
-    //config ledc channel3
-    ledc_channel.channel = LEDC_CHANNEL_3;
-    ledc_channel.gpio_num = LEDC_IO_3;
-    ledc_channel_config(&ledc_channel);
+    mcpwm_config_t pwm_config;
+    pwm_config.frequency = PWM_FREQ_HZ;
+    pwm_config.cmpr_a = 0;
+    pwm_config.cmpr_b = 0;
+    pwm_config.counter_mode = MCPWM_UP_COUNTER;
+    pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
+    mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
+    mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_1, &pwm_config);
 }
 
 #if defined(USE_CURVE)
@@ -148,49 +125,41 @@ static uint16_t vtune(uint16_t width)
     return width;
 }
 
-static uint16_t scale(uint16_t width)
+static float scale(uint16_t width)
 {
-    uint16_t rv = 0;
+    float duty;
 
     width = vtune(width);
-
-    if (PWM_RESOLUTION == LEDC_TIMER_11_BIT) {
-#if !defined(USE_ESC)
-        // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
-#if !defined(USE_CURVE)
-        int32_t length = width - 1100;
-        if (length < 0) {
-            length = 0;
-        } else {
-            // 2500/800 times
-            length = (length * 25) >> 3;
-        }
+#if defined (USE_ESC)
+    duty = (100 * PWM_FREQ_HZ * width) / 1000000.0;
 #else
-        int16_t length = pl_map(width);
-#endif
-        if (length > 2500) {
-            length = 2500;
-        } else if (length < 100) {
-            length = 0;
-        }
-        width = length;
-#endif
-        // 2500: 100% duty 0: 0% duty
-        // min(round((width * 2048)/2500)), 2047)
-        // approx 0.8192 with 3355/4096
-        rv = ((width * 3355) >> 12);
-        if (rv >= 2048) {
-            rv = 2047;
-        }
-    } else if (PWM_RESOLUTION == LEDC_TIMER_12_BIT) {
-        // min(round((width * 4096)/2500)), 4095)
-        // approx 1.6384 with 6711/4096
-        rv = ((width * 6711) >> 12);
-        if (rv >= 4096) {
-            rv = 4095;
-        }
+    // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
+# if !defined(USE_CURVE)
+    int32_t length = width - 1100;
+    if (length < 0) {
+        length = 0;
+    } else {
+        // 2500/800 times
+        length = (length * 25) >> 3;
     }
-    return rv;
+# else
+    int16_t length = pl_map(width);
+# endif
+    if (length > 2500) {
+        length = 2500;
+    } else if (length < 100) {
+        length = 0;
+    }
+    width = length;
+    // Map [0, 2500] to [0.0f, 100.0f]
+    duty = (100.0 * width) / 2500;
+#endif
+    if (duty < 0) {
+        duty = 0;
+    } else if (duty > 100.0f) {
+        duty = 100.0f;
+    }
+    return duty;
 }
 
 #define ube16_val(v, idx) (((uint16_t)v[2*idx] << 8) | v[2*idx+1])
@@ -210,22 +179,29 @@ bool pwm_stopped = false;
 // Stop motors.  For ESC, send the low stick value instead of 0.
 void pwm_shutdown(void)
 {
-#if defined(USE_ESC)
-    uint16_t low = LO_WIDTH;
-#else
-    uint16_t low = 0;
-#endif
-    //printf("pwm_shutdown\n");
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, low);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, low);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2, low);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3, low);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3);
+#if defined(USE_ESC)
+    float low = scale(LO_WIDTH);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, low);
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A,
+                        MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, low);
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B,
+                        MCPWM_DUTY_MODE_0); 
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A, low);
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A,
+                        MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B, low);
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B,
+                        MCPWM_DUTY_MODE_0); 
+#else
+    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
+    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
+    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A);
+    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B);
+#endif
     xSemaphoreGive(pwm_sem);
+    //printf("pwm_shutdown\n");
     pwm_stopped = true;
 }
 
@@ -233,14 +209,18 @@ void pwm_output(uint16_t *wd)
 {
     //printf("pwm_output %d %d %d %d\n", wd[0], wd[1], wd[2], wd[3]);
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, scale(wd[0]));
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, scale(wd[1]));
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2, scale(wd[2]));
-    ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3, scale(wd[3]));
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_2);
-    ledc_update_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_3);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, scale(wd[0]));
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A,
+                        MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, scale(wd[1]));
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B,
+                        MCPWM_DUTY_MODE_0); 
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A, scale(wd[2]));
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A,
+                        MCPWM_DUTY_MODE_0);
+    mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B, scale(wd[3]));
+    mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B,
+                        MCPWM_DUTY_MODE_0); 
     xSemaphoreGive(pwm_sem);
     pwm_stopped = (wd[0] <= LO_WIDTH && wd[1] <= LO_WIDTH
                    && wd[2] <= LO_WIDTH && wd[3] <= LO_WIDTH);
@@ -251,7 +231,7 @@ void pwm_output(uint16_t *wd)
 #define PWM_GREEN 14
 #define PWM_BLUE  15
 
-void pwm_ledc_task(void *arg)
+void pwm_task(void *arg)
 {
     in_arm = false;
     pwm_count = 0;
@@ -265,7 +245,7 @@ void pwm_ledc_task(void *arg)
     }
 
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
-    ledc_init();
+    pwm_init();
     xSemaphoreGive(pwm_sem);
 
 #if defined(USE_ESC)
@@ -347,5 +327,3 @@ void pwm_ledc_task(void *arg)
         pwm_output(wd);
     }
 }
-
-#endif // if defined(USE_PWM_LEDC)

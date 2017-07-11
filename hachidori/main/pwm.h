@@ -1,8 +1,8 @@
 // pwm definitions and globals
 
 // Define when ESC is used
-//#define USE_ESC
-#undef USE_ESC
+#define USE_ESC
+//#undef USE_ESC
 
 #define NUM_CHANNELS 4
 
