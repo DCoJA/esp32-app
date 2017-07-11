@@ -1,6 +1,5 @@
 /// -*- tab-width: 4; Mode: C++; c-basic-offset: 4; indent-tabs-mode: nil -*-
 
-#if defined(USE_PWM_LEDC)
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +14,6 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "driver/ledc.h"
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -31,20 +29,18 @@
 
 #include "adjust.h"
 
+#if !defined(USE_ESC)
+
+#include "driver/ledc.h"
+
 #define LEDC_IO_0    (13)
 #define LEDC_IO_1    (12)
 #define LEDC_IO_2    (14)
 #define LEDC_IO_3    (27)
 
-#if defined(USE_ESC)
-#define PWM_FREQ_HZ 400
-#define PWM_RESOLUTION LEDC_TIMER_12_BIT
-#define PWM_UPDATE_LIMIT 5
-#else
 #define PWM_FREQ_HZ 8000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
 #define PWM_UPDATE_LIMIT 2
-#endif
 
 void ledc_init(void)
 {
@@ -154,42 +150,32 @@ static uint16_t scale(uint16_t width)
 
     width = vtune(width);
 
-    if (PWM_RESOLUTION == LEDC_TIMER_11_BIT) {
-#if !defined(USE_ESC)
-        // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
+    // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
 #if !defined(USE_CURVE)
-        int32_t length = width - 1100;
-        if (length < 0) {
-            length = 0;
-        } else {
-            // 2500/800 times
-            length = (length * 25) >> 3;
-        }
-#else
-        int16_t length = pl_map(width);
-#endif
-        if (length > 2500) {
-            length = 2500;
-        } else if (length < 100) {
-            length = 0;
-        }
-        width = length;
-#endif
-        // 2500: 100% duty 0: 0% duty
-        // min(round((width * 2048)/2500)), 2047)
-        // approx 0.8192 with 3355/4096
-        rv = ((width * 3355) >> 12);
-        if (rv >= 2048) {
-            rv = 2047;
-        }
-    } else if (PWM_RESOLUTION == LEDC_TIMER_12_BIT) {
-        // min(round((width * 4096)/2500)), 4095)
-        // approx 1.6384 with 6711/4096
-        rv = ((width * 6711) >> 12);
-        if (rv >= 4096) {
-            rv = 4095;
-        }
+    int32_t length = width - 1100;
+    if (length < 0) {
+        length = 0;
+    } else {
+        // 2500/800 times
+        length = (length * 25) >> 3;
     }
+#else
+    int16_t length = pl_map(width);
+#endif
+    if (length > 2500) {
+        length = 2500;
+    } else if (length < 100) {
+        length = 0;
+    }
+    width = length;
+    // 2500: 100% duty 0: 0% duty
+    // min(round((width * 2048)/2500)), 2047)
+    // approx 0.8192 with 3355/4096
+    rv = ((width * 3355) >> 12);
+    if (rv >= 2048) {
+        rv = 2047;
+    }
+
     return rv;
 }
 
@@ -207,14 +193,10 @@ uint32_t pwm_count = 0;
 float last_width[NUM_CHANNELS];
 bool pwm_stopped = false;
 
-// Stop motors.  For ESC, send the low stick value instead of 0.
+// Stop motors.
 void pwm_shutdown(void)
 {
-#if defined(USE_ESC)
-    uint16_t low = LO_WIDTH;
-#else
     uint16_t low = 0;
-#endif
     //printf("pwm_shutdown\n");
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, low);
@@ -251,7 +233,7 @@ void pwm_output(uint16_t *wd)
 #define PWM_GREEN 14
 #define PWM_BLUE  15
 
-void pwm_ledc_task(void *arg)
+void pwm_task(void *arg)
 {
     in_arm = false;
     pwm_count = 0;
@@ -267,17 +249,6 @@ void pwm_ledc_task(void *arg)
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
     ledc_init();
     xSemaphoreGive(pwm_sem);
-
-#if defined(USE_ESC)
-    // wait 3 sec for esc start up
-    printf("wait 3 sec for esc start up\n");
-    vTaskDelay(3000 / portTICK_PERIOD_MS);
-    // write minimal stick data
-    pwm_shutdown();
-    // wait 6 sec for normal esc/motor start up
-    printf("wait 6 sec for normal esc/motor start up\n");
-    vTaskDelay(6000 / portTICK_PERIOD_MS);
-#endif
 
     struct B3packet pkt;
     TickType_t last_time = xTaskGetTickCount();
@@ -348,4 +319,4 @@ void pwm_ledc_task(void *arg)
     }
 }
 
-#endif // if defined(USE_PWM_LEDC)
+#endif // !defined(USE_ESC)

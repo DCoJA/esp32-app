@@ -14,9 +14,6 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_heap_alloc_caps.h"
-#include "driver/mcpwm.h"
-#include "soc/mcpwm_reg.h"
-#include "soc/mcpwm_struct.h"
 
 #include "lwip/err.h"
 #include "lwip/sockets.h"
@@ -32,19 +29,21 @@
 
 #include "adjust.h"
 
+#if defined(USE_ESC)
+
+#include "driver/mcpwm.h"
+#include "soc/mcpwm_reg.h"
+#include "soc/mcpwm_struct.h"
+
 #define MCPWM_IO_0   (13)
 #define MCPWM_IO_1   (12)
 #define MCPWM_IO_2   (14)
 #define MCPWM_IO_3   (27)
 
-#if defined(USE_ESC)
 #define PWM_FREQ_HZ 400
-#else
-#define PWM_FREQ_HZ 8000
-#endif
 #define PWM_UPDATE_LIMIT 2
 
-void pwm_init(void)
+static void pwm_init(void)
 {
     mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, MCPWM_IO_0);
     mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, MCPWM_IO_1);
@@ -60,35 +59,6 @@ void pwm_init(void)
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_1, &pwm_config);
 }
-
-#if defined(USE_CURVE)
-static int16_t pl_map(uint16_t width)
-{
-#define NP 16
-#define PW ((HI_WIDTH - LO_WIDTH) / NP)
-    static const uint16_t map[NP+1] = {
-        0, 0, 500, 1000,
-        1200, 1240, 1260, 1280,
-        1300, 1320, 1360, 1380,
-        1400, 1420, 1440, 1460,
-        1480
-    };
-
-    if (width > HI_WIDTH) {
-        width = HI_WIDTH;
-    } else if (width <= LO_WIDTH) {
-        return 0;
-    }
-    width -= LO_WIDTH;
-    int index = width / PW;
-    float ofs = (width % PW) / (float)PW;
-    if (index >= NP) {
-        index = NP - 1;
-    }
-    //printf("index:%d ofs %7.3f\n", index, ofs);
-    return map[index] + (uint16_t)(ofs * (map[index+1] - map[index]) + 0.1);
-}
-#endif
 
 extern float vbat_open;
 extern uint32_t n_battery_cells;
@@ -130,30 +100,7 @@ static float scale(uint16_t width)
     float duty;
 
     width = vtune(width);
-#if defined (USE_ESC)
     duty = (100 * PWM_FREQ_HZ * width) / 1000000.0;
-#else
-    // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
-# if !defined(USE_CURVE)
-    int32_t length = width - 1100;
-    if (length < 0) {
-        length = 0;
-    } else {
-        // 2500/800 times
-        length = (length * 25) >> 3;
-    }
-# else
-    int16_t length = pl_map(width);
-# endif
-    if (length > 2500) {
-        length = 2500;
-    } else if (length < 100) {
-        length = 0;
-    }
-    width = length;
-    // Map [0, 2500] to [0.0f, 100.0f]
-    duty = (100.0 * width) / 2500;
-#endif
     if (duty < 0) {
         duty = 0;
     } else if (duty > 100.0f) {
@@ -179,8 +126,8 @@ bool pwm_stopped = false;
 // Stop motors.  For ESC, send the low stick value instead of 0.
 void pwm_shutdown(void)
 {
+    //printf("pwm_shutdown\n");
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
-#if defined(USE_ESC)
     float low = scale(LO_WIDTH);
     mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A, low);
     mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A,
@@ -194,14 +141,7 @@ void pwm_shutdown(void)
     mcpwm_set_duty(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B, low);
     mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B,
                         MCPWM_DUTY_MODE_0); 
-#else
-    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_A);
-    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B);
-    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_A);
-    mcpwm_set_signal_low(MCPWM_UNIT_0, MCPWM_TIMER_1, MCPWM_OPR_B);
-#endif
     xSemaphoreGive(pwm_sem);
-    //printf("pwm_shutdown\n");
     pwm_stopped = true;
 }
 
@@ -248,7 +188,6 @@ void pwm_task(void *arg)
     pwm_init();
     xSemaphoreGive(pwm_sem);
 
-#if defined(USE_ESC)
     // wait 3 sec for esc start up
     printf("wait 3 sec for esc start up\n");
     vTaskDelay(3000 / portTICK_PERIOD_MS);
@@ -257,7 +196,6 @@ void pwm_task(void *arg)
     // wait 6 sec for normal esc/motor start up
     printf("wait 6 sec for normal esc/motor start up\n");
     vTaskDelay(6000 / portTICK_PERIOD_MS);
-#endif
 
     struct B3packet pkt;
     TickType_t last_time = xTaskGetTickCount();
@@ -327,3 +265,5 @@ void pwm_task(void *arg)
         pwm_output(wd);
     }
 }
+
+#endif // USE_ESC
