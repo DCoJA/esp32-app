@@ -256,8 +256,8 @@ void app_main(void)
 
     xTaskCreate(udp_task, "udp_task", 2048, NULL, 11, NULL);
     xTaskCreate(imu_task, "imu_task", 2048, NULL, 10, NULL);
-    //xTaskCreate(baro_task, "baro_task", 2048, NULL, 9, NULL);
-    xTaskCreate(baro2_task, "baro2_task", 2048, NULL, 9, NULL);
+    xTaskCreate(baro_task, "baro_task", 2048, NULL, 9, NULL);
+    //xTaskCreate(baro2_task, "baro2_task", 2048, NULL, 9, NULL);
     xTaskCreate(pwm_task, "pwm_task", 2048, NULL, 8, NULL);
     xTaskCreate(rn_task, "rn_task", 2048, NULL, 7, NULL);
     xTaskCreate(gps_task, "gps_task", 2048, NULL, 6, NULL);
@@ -280,9 +280,9 @@ void app_main(void)
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
 
-    gpio_set_level(GPIO_LED_RED, 0);
-    gpio_set_level(GPIO_LED_GREEN, 0);
-    gpio_set_level(GPIO_LED_BLUE, 0);
+    gpio_set_level(GPIO_LED_RED, RGBLED_OFF);
+    gpio_set_level(GPIO_LED_GREEN, RGBLED_OFF);
+    gpio_set_level(GPIO_LED_BLUE, RGBLED_OFF);
 
     rgb_led_green = 1;
 
@@ -290,15 +290,15 @@ void app_main(void)
     while (true) {
         if (red != rgb_led_red) {
             red = rgb_led_red;
-            gpio_set_level(GPIO_LED_RED, red);
+            gpio_set_level(GPIO_LED_RED, (red ? RGBLED_ON : RGBLED_OFF));
         }
         if (green != rgb_led_green) {
             green = rgb_led_green;
-            gpio_set_level(GPIO_LED_GREEN, green);
+            gpio_set_level(GPIO_LED_GREEN, (green ? RGBLED_ON : RGBLED_OFF));
         }
         if (blue != rgb_led_blue) {
             blue = rgb_led_blue;
-            gpio_set_level(GPIO_LED_BLUE, blue);
+            gpio_set_level(GPIO_LED_BLUE, (blue ? RGBLED_ON : RGBLED_OFF));
         }
         vTaskDelay(200 / portTICK_PERIOD_MS);
     }

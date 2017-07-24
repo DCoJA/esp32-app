@@ -38,7 +38,7 @@
 #define LEDC_IO_2    (14)
 #define LEDC_IO_3    (27)
 
-#define PWM_FREQ_HZ 8000
+#define PWM_FREQ_HZ 16000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
 #define PWM_UPDATE_LIMIT 2
 
