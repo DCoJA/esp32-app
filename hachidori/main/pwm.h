@@ -11,6 +11,8 @@
 #define HI_WIDTH 1900
 
 #define NUM_MOTORS 4
+#define MOTOR_ORDER_CW
+//#undef MOTOR_ORDER_CW
 
 #define DISARM_ON_INVERSION 1
 #define INVERSION_WM 50

@@ -35,10 +35,18 @@
 #include "soc/mcpwm_reg.h"
 #include "soc/mcpwm_struct.h"
 
+#if defined(MOTOR_ORDER_CW)
+#define MCPWM_IO_0   (13)
+#define MCPWM_IO_1   (14)
+#define MCPWM_IO_2   (27)
+#define MCPWM_IO_3   (12)
+#else
+// AMP motor order for X copter
 #define MCPWM_IO_0   (13)
 #define MCPWM_IO_1   (12)
 #define MCPWM_IO_2   (14)
 #define MCPWM_IO_3   (27)
+#endif
 
 #define PWM_FREQ_HZ 400
 #define PWM_UPDATE_LIMIT 2

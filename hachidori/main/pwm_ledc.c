@@ -33,10 +33,18 @@
 
 #include "driver/ledc.h"
 
+#if defined(MOTOR_ORDER_CW)
+#define LEDC_IO_0    (13)
+#define LEDC_IO_1    (14)
+#define LEDC_IO_2    (27)
+#define LEDC_IO_3    (12)
+#else
+// AMP motor order for X copter
 #define LEDC_IO_0    (13)
 #define LEDC_IO_1    (12)
 #define LEDC_IO_2    (14)
 #define LEDC_IO_3    (27)
+#endif
 
 #define PWM_FREQ_HZ 16000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
