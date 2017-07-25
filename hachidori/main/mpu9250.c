@@ -33,10 +33,9 @@
 // Experimental
 //#undef FIXUP_INS_OFFSET
 
-#if 1
-#define ROTATION_YAW	90
-//#define  ROTATION_YAW	270
-#endif
+#define ROTATION_YAW	180
+//#define  ROTATION_YAW	90
+
 
 // MPU9250
 #define MPU9250_ID      0x71
