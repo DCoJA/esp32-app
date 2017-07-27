@@ -264,7 +264,6 @@ void app_main(void)
     xTaskCreate(bat_task, "bat_task", 2048, NULL, 5, NULL);
     xTaskCreate(fs_task, "fs_task", 2048, NULL, 5, NULL);
 
-#if 1
     gpio_config_t io_conf;
     io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
@@ -284,6 +283,7 @@ void app_main(void)
     gpio_set_level(GPIO_LED_GREEN, RGBLED_OFF);
     gpio_set_level(GPIO_LED_BLUE, RGBLED_OFF);
 
+#if 1
     rgb_led_green = 1;
 
     uint8_t red = 0, green = 0, blue = 0;
@@ -303,8 +303,11 @@ void app_main(void)
         vTaskDelay(200 / portTICK_PERIOD_MS);
     }
 #else
+    bool green = false;
     while (true) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
+        green = !green;
+        gpio_set_level(GPIO_LED_GREEN, (green ? RGBLED_ON : RGBLED_OFF));
     }
 #endif
 }

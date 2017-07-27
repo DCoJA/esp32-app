@@ -10,7 +10,7 @@
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
-#include "esp_heap_alloc_caps.h"
+#include "esp_heap_caps.h"
 #include "nvs.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
@@ -54,7 +54,7 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
 {
     esp_err_t ret;
     spi_transaction_t trans;
-    uint8_t *rbuf = pvPortMallocCaps(len, MALLOC_CAP_DMA);
+    uint8_t *rbuf = heap_caps_malloc(len, MALLOC_CAP_DMA);
     if (rbuf == NULL) {
         return ESP_ERR_NO_MEM;
     }

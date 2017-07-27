@@ -14,7 +14,6 @@
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_deep_sleep.h"
-#include "esp_heap_alloc_caps.h"
 #include "driver/adc.h"
 
 #include "lwip/err.h"
