@@ -270,7 +270,8 @@ void app_main(void)
     io_conf.pin_bit_mask = ((1<<GPIO_LED_RED)|(1<<GPIO_LED_GREEN)
                             |(1<<GPIO_LED_BLUE));
     io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
+    // This ensures that all leds are off in deep sleep mode.
+    io_conf.pull_up_en = RGBLED_OFF;
     gpio_config(&io_conf);
 
     io_conf.mode = GPIO_MODE_INPUT;
