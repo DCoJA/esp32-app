@@ -343,6 +343,7 @@ static void ak8963_start(void)
 extern int sockfd;
 extern SemaphoreHandle_t send_sem;
 extern SemaphoreHandle_t nvs_sem;
+extern xQueueHandle ins_evt_queue;
 
 #if 1
 static int maybe_inverted;
@@ -465,13 +466,10 @@ void imu_task(void *arg)
     float gx, gy, gz, ax, ay, az, mx, my, mz;
     float filtz = GRAVITY_MSS;
 
-    TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
-        TickType_t lap = xTaskGetTickCount() - xLastWakeTime;
-        if (1/portTICK_PERIOD_MS > lap) {
-            vTaskDelay(1/portTICK_PERIOD_MS - lap);
-        }
-        xLastWakeTime = xTaskGetTickCount();
+        uint32_t gpio_num;
+        if (!xQueueReceive(ins_evt_queue, &gpio_num, portMAX_DELAY))
+            continue;
 
         if (!mpu9250_ready())
             continue;

@@ -200,6 +200,34 @@ static void nvs_init(void)
     ESP_ERROR_CHECK(err);
 }
 
+//#define GPIO_INS_INT	GPIO_NUM_22
+#define GPIO_INS_INT	GPIO_NUM_35
+
+static void xgpio_init(void)
+{
+    gpio_config_t io_conf;
+    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = ((1<<GPIO_LED_RED)|(1<<GPIO_LED_GREEN)
+                            |(1<<GPIO_LED_BLUE));
+    io_conf.pull_down_en = 0;
+    // This ensures that all leds are off in deep sleep mode.
+    io_conf.pull_up_en = RGBLED_OFF;
+    gpio_config(&io_conf);
+
+    // Interrupt of rising edge
+    io_conf.intr_type = GPIO_PIN_INTR_POSEDGE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1LL<<GPIO_INS_INT);
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    gpio_set_level(GPIO_LED_RED, RGBLED_OFF);
+    gpio_set_level(GPIO_LED_GREEN, RGBLED_OFF);
+    gpio_set_level(GPIO_LED_BLUE, RGBLED_OFF);
+}
+
 struct ringbuf ubloxbuf;
 
 SemaphoreHandle_t ringbuf_sem;
@@ -207,6 +235,17 @@ SemaphoreHandle_t send_sem;
 SemaphoreHandle_t pwm_sem;
 SemaphoreHandle_t i2c_sem;
 SemaphoreHandle_t nvs_sem;
+
+#define INS_EVT_QSIZE 10
+#define ESP_INTR_FLAG_DEFAULT 0
+
+xQueueHandle ins_evt_queue = NULL;
+
+static void IRAM_ATTR ins_isr_handler(void *arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(ins_evt_queue, &gpio_num, NULL);
+}
 
 volatile uint8_t rgb_led_red;
 volatile uint8_t rgb_led_green;
@@ -244,6 +283,7 @@ void app_main(void)
     spi_init();
     i2c_init();
     nvs_init();
+    xgpio_init();
 
     vSemaphoreCreateBinary(send_sem);
     vSemaphoreCreateBinary(pwm_sem);
@@ -254,6 +294,11 @@ void app_main(void)
     vSemaphoreCreateBinary(ringbuf_sem);
     ringbuf_init (&ubloxbuf);
 
+    // INS event queue
+    ins_evt_queue = xQueueCreate(INS_EVT_QSIZE, sizeof(uint32_t));
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    gpio_isr_handler_add(GPIO_INS_INT, ins_isr_handler, (void *)GPIO_INS_INT);
+
     xTaskCreate(udp_task, "udp_task", 2048, NULL, 11, NULL);
     xTaskCreate(imu_task, "imu_task", 2048, NULL, 10, NULL);
     xTaskCreate(baro_task, "baro_task", 2048, NULL, 9, NULL);
@@ -263,26 +308,6 @@ void app_main(void)
     xTaskCreate(gps_task, "gps_task", 2048, NULL, 6, NULL);
     xTaskCreate(bat_task, "bat_task", 2048, NULL, 5, NULL);
     xTaskCreate(fs_task, "fs_task", 2048, NULL, 5, NULL);
-
-    gpio_config_t io_conf;
-    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = ((1<<GPIO_LED_RED)|(1<<GPIO_LED_GREEN)
-                            |(1<<GPIO_LED_BLUE));
-    io_conf.pull_down_en = 0;
-    // This ensures that all leds are off in deep sleep mode.
-    io_conf.pull_up_en = RGBLED_OFF;
-    gpio_config(&io_conf);
-
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (1<<GPIO_NUM_22);
-    io_conf.pull_down_en = 1;
-    io_conf.pull_up_en = 0;
-    gpio_config(&io_conf);
-
-    gpio_set_level(GPIO_LED_RED, RGBLED_OFF);
-    gpio_set_level(GPIO_LED_GREEN, RGBLED_OFF);
-    gpio_set_level(GPIO_LED_BLUE, RGBLED_OFF);
 
 #if 1
     rgb_led_green = 1;
