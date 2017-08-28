@@ -205,8 +205,8 @@ static void mpu9250_start(void)
     mpu9250_write(PWR_MGMT_2, 0);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
-    // Set LPF to 184Hz
-    mpu9250_write(MPU_CONFIG, 1);
+    // 1: Set LPF to 184Hz 0: No LPF
+    mpu9250_write(MPU_CONFIG, 0);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
     // Sample rate 1000Hz

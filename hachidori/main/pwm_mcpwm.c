@@ -28,7 +28,7 @@
 
 #include "adjust.h"
 
-#if defined(USE_ESC)
+#if defined(USE_MCPWM)
 
 #include "driver/mcpwm.h"
 #include "soc/mcpwm_reg.h"
@@ -48,7 +48,7 @@
 #endif
 
 #define PWM_FREQ_HZ 400
-#define PWM_UPDATE_LIMIT 2
+#define PWM_UPDATE_LIMIT 5
 
 static void pwm_init(void)
 {
@@ -65,6 +65,8 @@ static void pwm_init(void)
     pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_0, &pwm_config);
     mcpwm_init(MCPWM_UNIT_0, MCPWM_TIMER_1, &pwm_config);
+    mcpwm_deadtime_disable(MCPWM_UNIT_0, MCPWM_TIMER_0);
+    mcpwm_deadtime_disable(MCPWM_UNIT_0, MCPWM_TIMER_1);
 }
 
 extern float vbat_open;
@@ -76,7 +78,7 @@ static uint16_t vtune(uint16_t width)
     if (n_battery_cells == 0) {
         return width;
     }
-#if !defined(ESC_ADJUST_THRUST_WITH_VOLTAGE)
+#if defined(ESC_ADJUST_THRUST_WITH_VOLTAGE)
     // Thrust will be propotinal to (vbat/(cell_typ * ncell))^2.
     // Approx with 2*(vbat-vtyp)/(4.0*ncell) and adjust width [1100,1900]
     // with it.
@@ -89,8 +91,8 @@ static uint16_t vtune(uint16_t width)
     } else if (addend < -VBAT_COMP_LIMIT) {
         addend = -VBAT_COMP_LIMIT;
     }
-    // Null fixup for LO_WIDTH, x1.0 for mid width and x2.0 for HI_WIDTH
-    addend = addend * (((float)(width - LO_WIDTH)) / ((HI_WIDTH-LO_WIDTH) / 2));
+    // Null fixup for LO_WIDTH, x0.5 for mid width and x1.0 for HI_WIDTH
+    addend = addend * (((float)(width - LO_WIDTH)) / (HI_WIDTH-LO_WIDTH));
     //printf("%d %d\n", addend, (int16_t)VBAT_COMP_COEFF);
     width += addend;
     if (width > HI_WIDTH) {
@@ -171,6 +173,16 @@ void pwm_output(uint16_t *wd)
     xSemaphoreGive(pwm_sem);
     pwm_stopped = (wd[0] <= LO_WIDTH && wd[1] <= LO_WIDTH
                    && wd[2] <= LO_WIDTH && wd[3] <= LO_WIDTH);
+}
+
+static bool cmp_mid(uint16_t wd[], int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (wd[i] > MID_WIDTH) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // RCOut RGB LED channels
@@ -269,8 +281,15 @@ void pwm_task(void *arg)
             last_width[i] = (float)(width);
         }
 
+        // Refuse arming if some pwms are over MID_WIDTH at startup
+        if (pwm_count < PWM_STARTUP_COUNT && cmp_mid(wd, NUM_MOTORS)) {
+            in_arm = false;
+            // printf("Unsafe starting with high pwm\n");
+            continue;
+        }
+
         pwm_output(wd);
     }
 }
 
-#endif // USE_ESC
+#endif // USE_MCPWM

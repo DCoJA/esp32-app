@@ -3,16 +3,30 @@
 // Define when ESC is used
 #define USE_ESC
 //#undef USE_ESC
+#define USE_MCPWM
+//#define USE_LEDC
+
+#if !defined(USE_MCPWM) && !defined(USE_LEDC)
+#error "no PWM module selected"
+#elif defined(USE_MCPWM) && defined(USE_LEDC)
+#error "two PWM modules selected"
+#endif
+
+// Adjust thrust with battery voltage
+//#define ESC_ADJUST_THRUST_WITH_VOLTAGE
 
 #define NUM_CHANNELS 4
 
 #define MIN_WIDTH 800
 #define LO_WIDTH 1100
 #define HI_WIDTH 1900
+#define MID_WIDTH 1500
 
 #define NUM_MOTORS 4
 #define MOTOR_ORDER_CW
 //#undef MOTOR_ORDER_CW
+
+#define PWM_STARTUP_COUNT 10
 
 #define DISARM_ON_INVERSION 1
 #define INVERSION_WM 50

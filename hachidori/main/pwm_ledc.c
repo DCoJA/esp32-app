@@ -28,7 +28,7 @@
 
 #include "adjust.h"
 
-#if !defined(USE_ESC)
+#if defined(USE_LEDC)
 
 #include "driver/ledc.h"
 
@@ -45,9 +45,15 @@
 #define LEDC_IO_3    (27)
 #endif
 
+#if defined(USE_ESC)
+#define PWM_FREQ_HZ 400
+#define PWM_RESOLUTION LEDC_TIMER_12_BIT
+#define PWM_UPDATE_LIMIT 5
+#else
 #define PWM_FREQ_HZ 16000
 #define PWM_RESOLUTION LEDC_TIMER_11_BIT
 #define PWM_UPDATE_LIMIT 2
+#endif
 
 void ledc_init(void)
 {
@@ -125,7 +131,7 @@ static uint16_t vtune(uint16_t width)
     if (n_battery_cells == 0) {
         return width;
     }
-#if !defined(ESC_ADJUST_THRUST_WITH_VOLTAGE)
+#if defined(ESC_ADJUST_THRUST_WITH_VOLTAGE)
     // Thrust will be propotinal to (vbat/(cell_typ * ncell))^2.
     // Approx with 2*(vbat-vtyp)/(4.0*ncell) and adjust width [1100,1900]
     // with it.
@@ -156,6 +162,16 @@ static uint16_t scale(uint16_t width)
     uint16_t rv = 0;
 
     width = vtune(width);
+
+#if defined(USE_ESC)
+    // min(round((width * 4096)/2500)), 4095)
+    // approx 1.6384 with 6711/4096
+    rv = ((width * 6711) >> 12);
+    if (rv >= 4096) {
+        rv = 4095;
+    }
+    return rv;
+#endif
 
     // Map [1100, 1900] to [0, 2500] with curve and cut less than 100
 #if !defined(USE_CURVE)
@@ -203,7 +219,11 @@ bool pwm_stopped = false;
 // Stop motors.
 void pwm_shutdown(void)
 {
+#if defined(USE_ESC)
+    uint16_t low = scale(LO_WIDTH);
+#else
     uint16_t low = 0;
+#endif
     //printf("pwm_shutdown\n");
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
     ledc_set_duty(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_0, low);
@@ -235,6 +255,16 @@ void pwm_output(uint16_t *wd)
                    && wd[2] <= LO_WIDTH && wd[3] <= LO_WIDTH);
 }
 
+static bool cmp_mid(uint16_t wd[], int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (wd[i] > MID_WIDTH) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // RCOut RGB LED channels
 #define PWM_RED   13
 #define PWM_GREEN 14
@@ -256,6 +286,17 @@ void pwm_task(void *arg)
     xSemaphoreTake(pwm_sem, portMAX_DELAY);
     ledc_init();
     xSemaphoreGive(pwm_sem);
+
+#if defined(USE_ESC)
+    // wait 3 sec for esc start up
+    printf("wait 3 sec for esc start up\n");
+    vTaskDelay(3000 / portTICK_PERIOD_MS);
+    // write minimal stick data
+    pwm_shutdown();
+    // wait 6 sec for normal esc/motor start up
+    printf("wait 6 sec for normal esc/motor start up\n");
+    vTaskDelay(6000 / portTICK_PERIOD_MS);
+#endif
 
     struct B3packet pkt;
     TickType_t last_time = xTaskGetTickCount();
@@ -322,8 +363,15 @@ void pwm_task(void *arg)
             last_width[i] = (float)(width);
         }
 
+        // Refuse arming if some pwms are over MID_WIDTH at startup
+        if (pwm_count < PWM_STARTUP_COUNT && cmp_mid(wd, NUM_MOTORS)) {
+            in_arm = false;
+            // printf("Unsafe starting with high pwm\n");
+            continue;
+        }
+
         pwm_output(wd);
     }
 }
 
-#endif // !defined(USE_ESC)
+#endif // !defined(USE_LEDC)
