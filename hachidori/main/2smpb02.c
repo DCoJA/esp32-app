@@ -56,8 +56,8 @@
 #define P_OVERSAMPLING (6 << 2)
 // Temperature oversampling x4
 #define T_OVERSAMPLING (3 << 5)
-// Filter coefficient
-#define FILTER_COEFF   5
+// Filter coefficient for 6.5Hz bandwidth
+#define FILTER_COEFF   1
 
 #ifdef I2C_2SMPB02
 static esp_err_t baro_write(uint8_t reg, uint8_t val)

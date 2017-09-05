@@ -48,7 +48,7 @@
 #endif
 
 #define PWM_FREQ_HZ 400
-#define PWM_UPDATE_LIMIT 5
+#define PWM_UPDATE_LIMIT 2
 
 static void pwm_init(void)
 {
@@ -95,11 +95,6 @@ static uint16_t vtune(uint16_t width)
     addend = addend * (((float)(width - LO_WIDTH)) / (HI_WIDTH-LO_WIDTH));
     //printf("%d %d\n", addend, (int16_t)VBAT_COMP_COEFF);
     width += addend;
-    if (width > HI_WIDTH) {
-        width = HI_WIDTH;
-    } else if (width < LO_WIDTH) {
-        width = LO_WIDTH;
-    }
 #endif
     return width;
 }
@@ -109,6 +104,12 @@ static float scale(uint16_t width)
     float duty;
 
     width = vtune(width);
+    if (width > HI_WIDTH) {
+        width = HI_WIDTH;
+    } else if (width < LO_WIDTH) {
+        width = LO_WIDTH;
+    }
+    //width = LO_WIDTH + (uint16_t)((float)(width - LO_WIDTH ) * 1.0f);
     duty = (100 * PWM_FREQ_HZ * width) / 1000000.0;
     if (duty < 0) {
         duty = 0;

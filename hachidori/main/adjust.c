@@ -12,11 +12,11 @@
 #define MAXADJ 250
 #define ROLL 1.0f
 #define PITCH 1.0f
-#define YAW 45.0f
+#define YAW 10.0f
 
 #define PGAIN 0.8f
 #define DGAIN 32.00f
-#define GCOEFF 200.0f
+#define GCOEFF 80.0f
 #define FORGET 0.1f
 #define BCOUNT 10
 
