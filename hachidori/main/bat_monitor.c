@@ -13,7 +13,7 @@
 #include "esp_system.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
-#include "esp_deep_sleep.h"
+#include "esp_sleep.h"
 #include "driver/adc.h"
 
 #include "lwip/err.h"
@@ -108,8 +108,8 @@ void bat_task(void *arg)
         if (backend == BM_INA226) {
             ina226_read_sample(&cbat_open, &vbat_open);
         } else {
-            vbat_open = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
-            cbat_open = current_scale(adc1_get_voltage(ADC_CURRENT));
+            vbat_open = voltage_scale(adc1_get_raw(ADC_VOLTAGE));
+            cbat_open = current_scale(adc1_get_raw(ADC_CURRENT));
         }
         vbat_open = sma_filter(vbat_open, vmem, N_SMA);
         sma_filter(cbat_open, cmem, N_SMA);
@@ -163,8 +163,8 @@ void bat_task(void *arg)
         if (backend == BM_INA226) {
             ina226_read_sample(&cf, &vf);
         } else {
-            vf = voltage_scale(adc1_get_voltage(ADC_VOLTAGE));
-            cf = current_scale(adc1_get_voltage(ADC_CURRENT));
+            vf = voltage_scale(adc1_get_raw(ADC_VOLTAGE));
+            cf = current_scale(adc1_get_raw(ADC_CURRENT));
         }
         //printf("%7.3f %7.3f\n", vf, cf);
         vf = sma_filter(vf, vmem, N_SMA);
