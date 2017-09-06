@@ -60,6 +60,7 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
     }
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.cmd = reg;
+    trans.length = 8*len;
     trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
     //printf("do transfer\n");

@@ -137,7 +137,7 @@ static void spi_init(void)
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS,               //CS pin
         .queue_size=1,                          //queue size
-        .flags=SPI_DEVICE_HALFDUPLEX,
+        .flags=0,
     };
     spi_device_interface_config_t devcfg_a={
         .command_bits=8,
@@ -148,7 +148,7 @@ static void spi_init(void)
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
         .queue_size=1,                          //queue size
-        .flags=SPI_DEVICE_HALFDUPLEX,
+        .flags=0,
     };
 
     //Initialize the SPI bus

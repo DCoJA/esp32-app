@@ -134,6 +134,7 @@ static uint8_t mpu9250_read(uint8_t reg)
     esp_err_t ret;
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
+    trans.length = 8;
     trans.rxlength = 8;
     trans.cmd = reg | 0x80;
     trans.flags = SPI_TRANS_USE_RXDATA;
@@ -168,6 +169,7 @@ static esp_err_t mpu9250_readn(uint8_t reg, uint8_t *buf, size_t len)
     }
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.cmd = reg | 0x80;
+    trans.length = 8*len;
     trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
     //printf("do transfer\n");
