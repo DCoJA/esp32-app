@@ -106,7 +106,7 @@ static esp_err_t baro_write(uint8_t reg, uint8_t val)
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
     trans.length = 8;
-    trans.command = reg & 0x7f;
+    trans.cmd = reg & 0x7f;
     trans.tx_data[0] = val;
     trans.flags = SPI_TRANS_USE_TXDATA;
     //printf("do transfer\n");
@@ -123,7 +123,7 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
         return ESP_ERR_NO_MEM;
     }
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.command = reg | 0x80;
+    trans.cmd = reg | 0x80;
     trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
     trans.flags=0;

@@ -152,7 +152,8 @@ static void spi_init(void)
     };
 
     //Initialize the SPI bus
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1);
+    // Sep 6 2017: Currently DMA doesn't work 
+    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
     assert(ret==ESP_OK);
     //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);

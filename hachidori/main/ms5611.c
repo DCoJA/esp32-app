@@ -44,7 +44,7 @@ static esp_err_t baro_cmd(uint8_t reg)
     esp_err_t ret;
     static spi_transaction_t trans;
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.command = reg;
+    trans.cmd = reg;
     //printf("do transfer\n");
     ret=spi_device_transmit(spi_baro, &trans);
     return ret;
@@ -59,7 +59,7 @@ static esp_err_t baro_readn(uint8_t reg, uint8_t *buf, size_t len)
         return ESP_ERR_NO_MEM;
     }
     memset(&trans, 0, sizeof(spi_transaction_t));
-    trans.command = reg;
+    trans.cmd = reg;
     trans.rxlength = 8*len;
     trans.rx_buffer = rbuf;
     //printf("do transfer\n");
