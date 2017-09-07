@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
+#include "esp_log.h"
 #include "esp_event.h"
 #include "esp_event_loop.h"
 #include "esp_partition.h"
@@ -152,8 +153,7 @@ static void spi_init(void)
     };
 
     //Initialize the SPI bus
-    // Sep 6 2017: Currently DMA doesn't work 
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
+    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1);
     assert(ret==ESP_OK);
     //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);
@@ -280,6 +280,8 @@ void app_main(void)
     ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &sta_config) );
     ESP_ERROR_CHECK( esp_wifi_start() );
     ESP_ERROR_CHECK( esp_wifi_connect() );
+
+    esp_log_level_set("wifi", ESP_LOG_WARN);
 
     spi_init();
     i2c_init();
