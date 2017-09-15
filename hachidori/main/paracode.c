@@ -24,6 +24,9 @@
 #define RESTART_AT_FAST_RECONNECT 1
 #endif
 
+// start paracode if no pwm for 500ms.
+#define PWM_WATCHDOG_COUNT 500
+
 // Disarm immediately
 
 void fs_disarm(void)
@@ -63,8 +66,7 @@ void fs_task(void *pvParameters)
         if (pwm_count) {
             if (last_count == pwm_count) {
                 prepare_failsafe = true;
-                // start paracode if no pwm for 2 sec.
-                if (++nopwm_count > 20) {
+                if (++nopwm_count > PWM_WATCHDOG_COUNT/100) {
                     break;
                 }
             } else {
@@ -81,6 +83,9 @@ void fs_task(void *pvParameters)
 #if RESTART_AT_MAYBE_LANDED
     uint32_t landed = 0;
 #endif
+
+    // Set target yaw
+    attitude_adjust_set_target_yaw();
 
     // Take the mean value of last widths as the virtual throttle
     uint16_t sum = 0;
@@ -115,7 +120,7 @@ void fs_task(void *pvParameters)
         }
 #endif
 #if RESTART_AT_FAST_RECONNECT
-        if (count < 4*100 && last_count != pwm_count) {
+        if (count < 1*100 && last_count != pwm_count) {
             printf("restart with fast reconnect\n");
             goto restart;
         }

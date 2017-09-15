@@ -12,7 +12,8 @@
 #define MAXADJ 250
 #define ROLL 1.0f
 #define PITCH 1.0f
-#define YAW 10.0f
+#define YAW 1.0f
+#define YAWERR_LIMIT 0.4f
 
 #define PGAIN 0.8f
 #define DGAIN 32.00f
@@ -20,18 +21,20 @@
 #define FORGET 0.1f
 #define BCOUNT 10
 
+// Assume that attitude_adjust_compute is invoked in every 10ms
+#define FILTER_STABILIZE_ACOUNT 300
+
 static uint32_t acount;
 static float dp[4], dd[4];
-static float qp0, qp1, qp2, qp3;
 static float base_adjust[4];
 static float adjust[4];
+static float target_yaw_re = 1.0f;
+static float target_yaw_im = 0.0f;
+static bool set_target_yaw = false;
 
 void attitude_adjust_init(void)
 {
-    qp0 = q0;
-    qp1 = q1;
-    qp2 = q2;
-    qp3 = q3;
+    // Currently nothing to do
 }
 
 void attitude_adjust_compute(void)
@@ -47,31 +50,38 @@ void attitude_adjust_compute(void)
        x     left  ^  right
        M2   M4       tail
     */
-    float rup, hup, ydelta, d[NUM_MOTORS];
+    float rup, hup, yawerr, d[NUM_MOTORS];
     // These are rough approximations which would be enough for
     // our purpose.
     rup = -(q0*q1+q3*q2);
     hup = q0*q2-q3*q1;
 
-    // Estimate yaw change
-    float qDot0, qDot1, qDot2, qDot3;
-    qDot0 = q0 - qp0;
-    qDot1 = q1 - qp1;
-    qDot2 = q2 - qp2;
-    qDot3 = q3 - qp3;
-    // yaw speed at body frame is 2 * qDot * qBar
-    ydelta = -q3*qDot0 - q2*qDot1 + q1*qDot2 + q0*qDot3;
-    //printf ("rup %7.3f hup %7.3f ydelta  %7.3f\n", rup, hup, ydelta); 
+    // Estimate yaw change.  Again very rough approximation only
+    // when the frame is almost holizontal.  Perhaps we require
+    // more presice values for the better estimation.
+    if (set_target_yaw || acount == FILTER_STABILIZE_ACOUNT) {
+            target_yaw_re = q1;
+            target_yaw_im = q2;
+            set_target_yaw = false;
+    }
+    // Don't count yawerr before stabilize or maybe landed
+    if (acount < FILTER_STABILIZE_ACOUNT) {
+	    yawerr = 0.0f;
+    } else {
+	    yawerr = 4*(target_yaw_re * q2 - target_yaw_im * q1);
+    }
+    //printf ("yawerr: %7.5f\n", yawerr);
+    // Clamp yawerr
+    if (yawerr < -YAWERR_LIMIT) {
+	    yawerr = -YAWERR_LIMIT;
+    } else if (yawerr > YAWERR_LIMIT) {
+	    yawerr = YAWERR_LIMIT;
+    }
 
-    qp0 = q0;
-    qp1 = q1;
-    qp2 = q2;
-    qp3 = q3;
-
-    d[0] =  ROLL*rup + PITCH*hup + YAW*ydelta; // M1 right head
-    d[1] = -ROLL*rup - PITCH*hup + YAW*ydelta; // M2 left  tail
-    d[2] = -ROLL*rup + PITCH*hup - YAW*ydelta; // M3 left  head
-    d[3] =  ROLL*rup - PITCH*hup - YAW*ydelta; // M4 right tail
+    d[0] =  ROLL*rup + PITCH*hup + YAW*yawerr; // M1 right head
+    d[1] = -ROLL*rup - PITCH*hup + YAW*yawerr; // M2 left  tail
+    d[2] = -ROLL*rup + PITCH*hup - YAW*yawerr; // M3 left  head
+    d[3] =  ROLL*rup - PITCH*hup - YAW*yawerr; // M4 right tail
     //printf ("d0 %7.3f d1 %7.3f d2 %7.3f d3 %7.3f\n", d[0], d[1], d[2], d[3]);
     for (int i = 0; i < NUM_MOTORS; i++) {
         float adj = base_adjust[i];
@@ -85,7 +95,7 @@ void attitude_adjust_compute(void)
         } else if (adj < -MAXADJ) {
             adj = -MAXADJ;
         }
-        adjust[i] = adj;
+        adjust[i] = (acount < FILTER_STABILIZE_ACOUNT)? 0 : adj;
         if ((acount % BCOUNT) == 0) {
             base_adjust[i] = adj;
         }
@@ -99,4 +109,9 @@ void attitude_adjust_get(float *adj)
     for (int i = 0; i < NUM_MOTORS; i++) {
         adj[i] = adjust[i];
     }
+}
+
+void attitude_adjust_set_target_yaw(void)
+{
+    set_target_yaw = true;
 }

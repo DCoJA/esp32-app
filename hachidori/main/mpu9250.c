@@ -110,6 +110,8 @@
 
 #define GRAVITY_MSS     9.80665f
 
+#define FILTER_CONVERGE_COUNT 2000
+
 // accelerometer scaling for 16g range
 #define MPU9250_ACCEL_SCALE_1G    (GRAVITY_MSS / 2048.0f)
 
@@ -589,7 +591,7 @@ void imu_task(void *arg)
             }
             xSemaphoreGive(send_sem);
 
-            beta = (count++ < 1000) ? 2.0f : 0.2f;
+            beta = (count++ < FILTER_CONVERGE_COUNT) ? 16.0f : 0.2f;
             MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
             KFACCupdate(ax, ay, az);
             attitude_adjust_compute();
@@ -619,5 +621,6 @@ void imu_task(void *arg)
                 maybe_landed = false;
             }
         }
+        MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
     }
 }
