@@ -125,9 +125,11 @@ extern int sockfd;
 extern struct ringbuf ubloxbuf;
 extern SemaphoreHandle_t ringbuf_sem;
 extern SemaphoreHandle_t pwm_sem;
+extern xQueueHandle param_queue;
 
 // pwm global
 bool in_failsafe = false;
+bool in_config = false;
 bool in_arm = false;
 uint32_t pwm_count = 0;
 float last_width[NUM_CHANNELS];
@@ -240,7 +242,15 @@ void pwm_task(void *arg)
             xSemaphoreGive(ringbuf_sem);
             // printf("receive GPSCMD %d bytes\n", len);
             continue;
-        } else if (pkt.tos != TOS_PWM) {
+        } else if (pkt.tos == TOS_PARAM) {
+            if (pwm_count)
+                continue;
+            if (xQueueSend(param_queue, pkt.data, 0) != pdTRUE) {
+                printf("fail to queue PARAM\n");
+            }
+            in_config = true;
+            continue;
+        } else if (pkt.tos != TOS_PWM || in_config) {
             continue;
         }
 

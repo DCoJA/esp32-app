@@ -18,3 +18,5 @@ struct B3packet {
 
 #define TOS_PWM         64
 #define TOS_GPSCMD      (64+12)
+
+#define TOS_PARAM	0xfe

@@ -63,6 +63,8 @@ void fs_task(void *pvParameters)
             vTaskDelay(100/portTICK_PERIOD_MS - lap);
         }
         xLastWakeTime = xTaskGetTickCount();
+        if (in_config)
+            continue;
         if (pwm_count) {
             if (last_count == pwm_count) {
                 prepare_failsafe = true;

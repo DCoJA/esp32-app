@@ -62,6 +62,17 @@ esp_err_t event_handler(void *ctx, system_event_t *event)
 
 int sockfd = -1;
 
+SemaphoreHandle_t ringbuf_sem;
+SemaphoreHandle_t send_sem;
+SemaphoreHandle_t pwm_sem;
+SemaphoreHandle_t i2c_sem;
+SemaphoreHandle_t nvs_sem;
+
+#define PARAM_QSIZE 2
+xQueueHandle param_queue = NULL;
+
+#define MAX_KEY_LENGTH 15
+
 static void udp_task(void *arg)
 {
     struct sockaddr_in saddr;
@@ -105,8 +116,57 @@ static void udp_task(void *arg)
     }
 
     sockfd = s;
+
+    nvs_handle storage_handle;
+    esp_err_t err;
     while (true) {
-        vTaskDelay(3000 / portTICK_PERIOD_MS);
+        uint8_t pbuf[B3SIZE];
+        union { float f; int32_t i; uint8_t bytes[sizeof(float)];} val;
+        struct B3packet pkt;
+
+        memset(pbuf, 0, B3SIZE);
+        if (xQueueReceive(param_queue, pbuf, portMAX_DELAY) != pdTRUE)
+            continue;
+        xSemaphoreTake(nvs_sem, portMAX_DELAY);
+        err = nvs_open("storage", NVS_READWRITE, &storage_handle);
+        if (err != ESP_OK) {
+            printf("NVS can't be opened (%d)\n", err);
+        } else {
+            if (pbuf[B3SIZE-1] == 1) {
+                // set
+                memcpy(val.bytes, &pbuf[B3SIZE-6], 4);
+                err = nvs_set_i32(storage_handle, (const char*)pbuf, val.i);
+                if (err == ESP_OK)
+                    err = nvs_commit(storage_handle);
+            } else if (pbuf[B3SIZE-1] == 2) {
+                // delete
+                err = nvs_erase_key(storage_handle, (const char*)pbuf);
+                if (err == ESP_OK)
+                    err = nvs_commit(storage_handle);
+            } else {
+                // get
+                if (*pbuf == '%')
+                    val.f = 0;
+                else
+                    val.i = 0;
+                err = nvs_get_i32(storage_handle, (const char*)pbuf, &(val.i));
+            }
+        }
+        nvs_close(storage_handle);
+        xSemaphoreGive(nvs_sem);
+        // Send packet back
+        pkt.head = B3HEADER;
+        pkt.tos = TOS_PARAM;
+        memcpy(&pkt.data[0], pbuf, MAX_KEY_LENGTH);
+        pkt.data[MAX_KEY_LENGTH] = 0;
+        memcpy(&pkt.data[B3SIZE-6], val.bytes, 4);
+        pkt.data[B3SIZE-2] = (err == ESP_OK) ? 0 : 1;
+        pkt.data[B3SIZE-1] = pbuf[B3SIZE-1];
+        xSemaphoreTake(send_sem, portMAX_DELAY);
+        int n = send(sockfd, &pkt, sizeof(pkt), 0);
+        if (n < 0) {
+        }
+        xSemaphoreGive(send_sem);
     }
 }
 
@@ -231,12 +291,6 @@ static void xgpio_init(void)
 
 struct ringbuf ubloxbuf;
 
-SemaphoreHandle_t ringbuf_sem;
-SemaphoreHandle_t send_sem;
-SemaphoreHandle_t pwm_sem;
-SemaphoreHandle_t i2c_sem;
-SemaphoreHandle_t nvs_sem;
-
 #define INS_EVT_QSIZE 10
 #define ESP_INTR_FLAG_DEFAULT 0
 
@@ -301,6 +355,9 @@ void app_main(void)
     ins_evt_queue = xQueueCreate(INS_EVT_QSIZE, sizeof(uint32_t));
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
     gpio_isr_handler_add(GPIO_INS_INT, ins_isr_handler, (void *)GPIO_INS_INT);
+
+    // PARAM queue
+    param_queue = xQueueCreate(PARAM_QSIZE, B3SIZE);
 
     xTaskCreate(udp_task, "udp_task", 2048, NULL, 11, NULL);
     xTaskCreate(imu_task, "imu_task", 2048, NULL, 10, NULL);

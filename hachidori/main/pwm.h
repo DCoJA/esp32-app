@@ -33,6 +33,7 @@
 
 extern bool prepare_failsafe;
 extern bool in_failsafe;
+extern bool in_config;
 extern bool in_arm;
 extern uint32_t pwm_count;
 extern float last_width[NUM_CHANNELS];

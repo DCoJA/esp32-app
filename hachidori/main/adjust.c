@@ -55,6 +55,7 @@ void attitude_adjust_compute(void)
     // our purpose.
     rup = -(q0*q1+q3*q2);
     hup = q0*q2-q3*q1;
+    //printf ("rup: %7.5f hup: %7.5f\n", rup, hup);
 
     // Estimate yaw change.  Again very rough approximation only
     // when the frame is almost holizontal.  Perhaps we require

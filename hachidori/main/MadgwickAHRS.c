@@ -29,7 +29,7 @@ Sqrt (float x)
   return u.f;
 }
 
-#define sampleFreq	100	// sample frequency in Hz
+#define sampleFreq	1000	// sample frequency in Hz
 #define DT		(1.0f/sampleFreq)
 #define betaDef		0.2f	// 2 * proportional gain
 
