@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
+#include "esp_event.h"
+#include "nvs.h"
 
 #include "pwm.h"
 #include "MadgwickAHRS.h"
@@ -31,10 +33,28 @@ static float adjust[4];
 static float target_yaw_re = 1.0f;
 static float target_yaw_im = 0.0f;
 static bool set_target_yaw = false;
+static float control_gain = GCOEFF;
+
+extern SemaphoreHandle_t nvs_sem;
 
 void attitude_adjust_init(void)
 {
-    // Currently nothing to do
+    nvs_handle storage_handle;
+    esp_err_t err;
+    union { int32_t i; float f;} gain;
+
+    xSemaphoreTake(nvs_sem, portMAX_DELAY);
+    err = nvs_open("storage", NVS_READONLY, &storage_handle);
+    if (err != ESP_OK) {
+        printf("NVS can't be opened (%d)\n", err);
+    } else {
+        err = nvs_get_i32(storage_handle, "%control_gain", &gain.i);
+        if (err == ESP_OK) {
+            printf("%%control_gain = %f\n", gain.f);
+            control_gain = gain.f;
+        }
+    }
+    xSemaphoreGive(nvs_sem);
 }
 
 void attitude_adjust_compute(void)

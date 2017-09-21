@@ -31,7 +31,7 @@
 #include "rgbled.h"
 
 // Experimental
-//#undef FIXUP_INS_OFFSET
+#define FIXUP_INS_OFFSET
 
 #define ROTATION_YAW	180
 //#define  ROTATION_YAW	90
@@ -120,6 +120,9 @@
  *  gyro as 16.4 LSB/DPS at scale factor of +/- 2000dps (FS_SEL==3)
  */
 static const float GYRO_SCALE = 0.0174532f / 16.4f;
+
+static const float TEMP_SCALE = 1.0f / 333.87f;
+#define TEMP_OFFSET 21.0f
 
 #define AK8963_MILLIGAUSS_SCALE 10.0f
 static const float ADC_16BIT_RESOLUTION = 0.15f;
@@ -344,9 +347,130 @@ static void ak8963_start(void)
     // Start measurement
 }
 
+extern SemaphoreHandle_t nvs_sem;
+
+static float xg_offset_tc, yg_offset_tc, zg_offset_tc;
+static float xa_offset, ya_offset, za_offset;
+static float xa_offset_tc, ya_offset_tc, za_offset_tc;
+
+static void fixup_ins_offsets(void)
+{
+    nvs_handle storage_handle;
+    esp_err_t err;
+    union { int32_t i; float f;} xg_offs, yg_offs, zg_offs;
+    union { int32_t i; float f;} xa_offs, ya_offs, za_offs;
+    union { int32_t i; float f;} xg_offs_tc, yg_offs_tc, zg_offs_tc;
+    union { int32_t i; float f;} xa_offs_tc, ya_offs_tc, za_offs_tc;
+    xg_offs.f = yg_offs.f = zg_offs.f = 0;
+    xa_offs.f = ya_offs.f = za_offs.f = 0;
+    xg_offs_tc.f = yg_offs_tc.f = zg_offs_tc.f = 0;
+    xa_offs_tc.f = ya_offs_tc.f = za_offs_tc.f = 0;
+
+    xSemaphoreTake(nvs_sem, portMAX_DELAY);
+    err = nvs_open("storage", NVS_READONLY, &storage_handle);
+    if (err != ESP_OK) {
+        printf("NVS can't be opened (%d)\n", err);
+    } else {
+        // Try to look preset offsets
+        err = nvs_get_i32(storage_handle, "%xg_offset", &xg_offs.i);
+        if (err == ESP_OK) {
+            printf("%%xg_offset = %f\n", xg_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%yg_offset", &yg_offs.i);
+        if (err == ESP_OK) {
+            printf("%%yg_offset = %f\n", yg_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%zg_offset", &zg_offs.i);
+        if (err == ESP_OK) {
+            printf("%%zg_offset = %f\n", zg_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%xg_offset_tc", &xg_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%xg_offset_tc = %f\n", xg_offs_tc.f);
+        }
+        err = nvs_get_i32(storage_handle, "%yg_offset_tc", &yg_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%yg_offset_tc = %f\n", yg_offs_tc.f);
+        }
+        err = nvs_get_i32(storage_handle, "%zg_offset_tc", &zg_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%zg_offset_tc = %f\n", zg_offs_tc.f);
+        }
+        err = nvs_get_i32(storage_handle, "%xa_offset", &xa_offs.i);
+        if (err == ESP_OK) {
+            printf("%%xa_offset = %f\n", xa_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%ya_offset", &ya_offs.i);
+        if (err == ESP_OK) {
+            printf("%%ya_offset = %f\n", ya_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%za_offset", &za_offs.i);
+        if (err == ESP_OK) {
+            printf("%%za_offset = %f\n", za_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%xa_offset_tc", &xa_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%xa_offset_tc = %f\n", xa_offs_tc.f);
+        }
+        err = nvs_get_i32(storage_handle, "%ya_offset_tc", &ya_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%ya_offset_tc = %f\n", ya_offs_tc.f);
+        }
+        err = nvs_get_i32(storage_handle, "%za_offset_tc", &za_offs_tc.i);
+        if (err == ESP_OK) {
+            printf("%%za_offset_tc = %f\n", za_offs_tc.f);
+        }
+        nvs_close(storage_handle);
+    }
+    xSemaphoreGive(nvs_sem);
+
+    // GYRO FS_SEL=3 means that offset_reg/2 effects
+    // See RS-MPU-6000A-00.pdf page.11:
+    //   "OffsetDPS= X_OFFS_USR * 4 / 2^FS_SEL / Gyro_Sensitivity"
+#if (ROTATION_YAW == 0)
+    int xg_offset = (int)(2 * yg_offs.f / GYRO_SCALE);
+    int yg_offset = (int)(2 * xg_offs.f / GYRO_SCALE);
+    int zg_offset = -(int)(2 * zg_offs.f / GYRO_SCALE);
+#elif (ROTATION_YAW == 90)
+    int xg_offset = -(int)(2 * xg_offs.f / GYRO_SCALE);
+    int yg_offset = (int)(2 * yg_offs.f / GYRO_SCALE);
+    int zg_offset = -(int)(2 * zg_offs.f / GYRO_SCALE);
+#elif (ROTATION_YAW == 180)
+    int xg_offset = -(int)(2 * yg_offs.f / GYRO_SCALE);
+    int yg_offset = -(int)(2 * xg_offs.f / GYRO_SCALE);
+    int zg_offset = -(int)(2 * zg_offs.f / GYRO_SCALE);
+#elif (ROTATION_YAW == 270)
+    int xg_offset = (int)(2 * xg_offs.f / GYRO_SCALE);
+    int yg_offset = -(int)(2 * yg_offs.f / GYRO_SCALE);
+    int zg_offset = -(int)(2 * zg_offs.f / GYRO_SCALE);
+#else
+#error "bad ROTATION_YAW value"
+#endif
+    if (xg_offset) {
+        mpu9250_write(XG_OFFSET_H, (xg_offset >> 8) & 0xff);
+        mpu9250_write(XG_OFFSET_L, xg_offset & 0xff);
+    }
+    if (yg_offset) {
+        mpu9250_write(YG_OFFSET_H, (yg_offset >> 8) & 0xff);
+        mpu9250_write(YG_OFFSET_L, yg_offset & 0xff);
+    }
+    if (zg_offset) {
+        mpu9250_write(ZG_OFFSET_H, (zg_offset >> 8) & 0xff);
+        mpu9250_write(ZG_OFFSET_L, zg_offset & 0xff);
+    }
+    xa_offset = xa_offs.f;
+    ya_offset = ya_offs.f;
+    za_offset = za_offs.f;
+    xg_offset_tc = xg_offs_tc.f;
+    yg_offset_tc = yg_offs_tc.f;
+    zg_offset_tc = zg_offs_tc.f;
+    xa_offset_tc = xa_offs_tc.f;
+    ya_offset_tc = ya_offs_tc.f;
+    za_offset_tc = za_offs_tc.f;
+}
+
 extern int sockfd;
 extern SemaphoreHandle_t send_sem;
-extern SemaphoreHandle_t nvs_sem;
 extern xQueueHandle ins_evt_queue;
 
 #if 1
@@ -407,37 +531,7 @@ void imu_task(void *arg)
     mpu9250_start();
 
 #if defined(FIXUP_INS_OFFSET)
-    nvs_handle storage_handle;
-    esp_err_t err;
-    int xg_offset = 0, yg_offset = 0, zg_offset = 0;
-
-    xSemaphoreTake(nvs_sem, portMAX_DELAY);
-    err = nvs_open("storage", NVS_READONLY, &storage_handle);
-    if (err != ESP_OK) {
-        printf("NVS can't be opened (%d)\n", err);
-    } else {
-        // Try to look preset offsets
-        err = nvs_get_i32(storage_handle, "xg_offset", &xg_offset);
-        if (err == ESP_OK) {
-            printf("xg_offset = %d\n", xg_offset);
-            mpu9250_write(XG_OFFSET_H, (xg_offset >> 8) & 0xff);
-            mpu9250_write(XG_OFFSET_L, xg_offset & 0xff);
-        }
-        err = nvs_get_i32(storage_handle, "yg_offset", &yg_offset);
-        if (err == ESP_OK) {
-            printf("yg_offset = %d\n", yg_offset);
-            mpu9250_write(YG_OFFSET_H, (yg_offset >> 8) & 0xff);
-            mpu9250_write(YG_OFFSET_L, yg_offset & 0xff);
-        }
-        err = nvs_get_i32(storage_handle, "zg_offset", &zg_offset);
-        if (err == ESP_OK) {
-            printf("zg_offset = %d\n", zg_offset);
-            mpu9250_write(ZG_OFFSET_H, (zg_offset >> 8) & 0xff);
-            mpu9250_write(ZG_OFFSET_L, zg_offset & 0xff);
-        }
-        nvs_close(storage_handle);
-    }
-    xSemaphoreGive(nvs_sem);
+    fixup_ins_offsets();
 #endif
 
     // Configure slaves
@@ -468,6 +562,7 @@ void imu_task(void *arg)
     struct B3packet pkt;
     int count = 0;
     float gx, gy, gz, ax, ay, az, mx, my, mz;
+    float temp;
     float filtz = GRAVITY_MSS;
 
     while (1) {
@@ -511,7 +606,17 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
 
+        union { float f; uint8_t bytes[sizeof(float)];} ut;
+        ut.f = ((float)be16_val(rx.d, 3)) * TEMP_SCALE + TEMP_OFFSET;
+        temp = ut.f;
+
         ax = ux.f; ay = uy.f; az = uz.f;
+#if defined(FIXUP_INS_OFFSET)
+        ax += xa_offset + (temp - TEMP_OFFSET) * xa_offset_tc;
+        ay += ya_offset + (temp - TEMP_OFFSET) * ya_offset_tc;
+        az += za_offset + (temp - TEMP_OFFSET) * za_offset_tc;
+        ux.f = ax; uy.f = ay; uz.f = az;
+#endif
         memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
         memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
         memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
@@ -535,9 +640,16 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
         gx = ux.f; gy = uy.f; gz = uz.f;
+#if defined(FIXUP_INS_OFFSET)
+        gx += (temp - TEMP_OFFSET) * xg_offset_tc;
+        gy += (temp - TEMP_OFFSET) * yg_offset_tc;
+        gz += (temp - TEMP_OFFSET) * zg_offset_tc;
+        ux.f = gx; uy.f = gy; uz.f = gz;
+#endif
         memcpy(&pkt.data[12], ux.bytes, sizeof(ux));
         memcpy(&pkt.data[16], uy.bytes, sizeof(uy));
         memcpy(&pkt.data[20], uz.bytes, sizeof(uz));
+        memcpy(&pkt.data[24], ut.bytes, sizeof(ut));
 
         pkt.head = B3HEADER;
         pkt.tos = TOS_IMU;
