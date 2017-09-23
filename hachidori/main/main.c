@@ -359,8 +359,8 @@ void app_main(void)
     // PARAM queue
     param_queue = xQueueCreate(PARAM_QSIZE, B3SIZE);
 
-    xTaskCreate(udp_task, "udp_task", 2048, NULL, 11, NULL);
-    xTaskCreate(imu_task, "imu_task", 2048, NULL, 10, NULL);
+    xTaskCreate(udp_task, "udp_task", 2048, NULL, 4, NULL);
+    xTaskCreate(imu_task, "imu_task", 2048, NULL, 11, NULL);
     xTaskCreate(baro_task, "baro_task", 2048, NULL, 9, NULL);
     //xTaskCreate(baro2_task, "baro2_task", 2048, NULL, 9, NULL);
     xTaskCreate(pwm_task, "pwm_task", 2048, NULL, 8, NULL);

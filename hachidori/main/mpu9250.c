@@ -5,6 +5,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
 #include "esp_event.h"
@@ -196,14 +197,13 @@ static bool mpu9250_ready(void)
 }
 
 struct sample {
-    uint8_t int_status;
     uint8_t d[14];
 };
 
 static bool mpu9250_read_sample(struct sample *rx)
 {
     esp_err_t rv;
-    rv = mpu9250_readn(INT_STATUS, (uint8_t *)rx, sizeof(struct sample));
+    rv = mpu9250_readn(ACCEL_XOUT_H, (uint8_t *)rx, sizeof(struct sample));
     return (rv == ESP_OK);
 }
 
@@ -237,7 +237,7 @@ static void mpu9250_start(void)
     vTaskDelay(1/portTICK_PERIOD_MS);
 
     uint8_t val = mpu9250_read(INT_PIN_CFG);
-    val |= 0x30;
+    val |= 0x20;
     mpu9250_write(INT_PIN_CFG, val);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
@@ -473,6 +473,23 @@ extern int sockfd;
 extern SemaphoreHandle_t send_sem;
 extern xQueueHandle ins_evt_queue;
 
+static xQueueHandle pkt_queue;
+#define PKT_QSIZE 16
+
+static void imu_pkt_task(void *arg)
+{
+    struct B3packet pkt;
+    while(1) {
+        if (xQueueReceive(pkt_queue, &pkt, portMAX_DELAY) != pdTRUE)
+            continue;
+        xSemaphoreTake(send_sem, portMAX_DELAY);
+        int n = send(sockfd, &pkt, sizeof(pkt), 0);
+        if (n < 0) {
+        }
+        xSemaphoreGive(send_sem);
+    }
+}
+
 #if 1
 static int maybe_inverted;
 bool maybe_landed = true;
@@ -483,6 +500,9 @@ void imu_task(void *arg)
     while (sockfd < 0) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+
+    pkt_queue = xQueueCreate(PKT_QSIZE, sizeof(struct B3packet));
+    xTaskCreate(imu_pkt_task, "imu_pkt_task", 2048, NULL, 10, NULL);
 
     uint8_t rv;
     rv = mpu9250_read(WHO_IM_I);
@@ -653,11 +673,9 @@ void imu_task(void *arg)
 
         pkt.head = B3HEADER;
         pkt.tos = TOS_IMU;
-        xSemaphoreTake(send_sem, portMAX_DELAY);
-        int n = send(sockfd, &pkt, sizeof(pkt), 0);
-        if (n < 0) {
+        if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
+            printf("fail to queue IMU packet\n");
         }
-        xSemaphoreGive(send_sem);
 
         if ((count++ % 10) == 0) {
             ak8963_read_sample(&akrx);
@@ -697,12 +715,9 @@ void imu_task(void *arg)
 
             pkt.head = B3HEADER;
             pkt.tos = TOS_MAG;
-            xSemaphoreTake(send_sem, portMAX_DELAY);
-            int n = send(sockfd, &pkt, sizeof(pkt), 0);
-            if (n < 0) {
+            if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
+                printf("fail to queue MAG packet\n");
             }
-            xSemaphoreGive(send_sem);
-
             beta = (count++ < FILTER_CONVERGE_COUNT) ? 16.0f : 0.2f;
             MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
             KFACCupdate(ax, ay, az);
