@@ -55,6 +55,8 @@
 #define ACCEL_CONFIG    0x1C
 #define ACCEL_CONFIG2   0x1D
 
+#define FIFO_EN         0x23
+
 #define I2C_MST_CTRL    0x24
 #define I2C_SLV0_ADDR   0x25
 #define I2C_SLV0_REG    0x26
@@ -88,6 +90,10 @@
 #define USER_CTRL       0x6A
 #define PWR_MGMT_1      0x6B
 #define PWR_MGMT_2      0x6C
+
+#define FIFO_COUNTH     0x72
+#define FIFO_COUNTL     0x73
+#define FIFO_R_W        0x74
 
 #define WHO_IM_I        0x75
 
@@ -200,11 +206,57 @@ struct sample {
     uint8_t d[14];
 };
 
+#if 0
 static bool mpu9250_read_sample(struct sample *rx)
 {
     esp_err_t rv;
     rv = mpu9250_readn(ACCEL_XOUT_H, (uint8_t *)rx, sizeof(struct sample));
     return (rv == ESP_OK);
+}
+#endif
+
+static int mpu9250_fifo_count(void)
+{
+    uint8_t c[2];
+    esp_err_t rv;
+    rv = mpu9250_readn(FIFO_COUNTH, c, 2);
+    return (rv == ESP_OK) ? be16_val(c, 0) : 0;
+}
+
+static bool mpu9250_read_fifo(struct sample *rx)
+{
+    esp_err_t rv;
+    rv = mpu9250_readn(FIFO_R_W, (uint8_t *)rx, sizeof(struct sample));
+    return (rv == ESP_OK);
+}
+
+// Check fifo entry with temperature
+static bool check_fifo(int t)
+{
+    static int raw;
+    static bool cached = false;
+    if (cached && t - raw > -340 && t - raw < 340) {
+        return true;
+    }
+    uint8_t temp[2];
+    if (ESP_OK == mpu9250_readn(TEMP_OUT_H, temp, 2)) {
+        raw = be16_val(temp, 0);
+        cached = true;
+    }
+    return (t - raw > -340 && t - raw < 340);
+}
+
+static void mpu9250_fifo_reset(void)
+{
+    uint8_t val = mpu9250_read(USER_CTRL);
+    val &= ~0x44;
+    mpu9250_write(FIFO_EN, 0);
+    mpu9250_write(USER_CTRL, val);
+    mpu9250_write(USER_CTRL, val|0x04);
+    mpu9250_write(USER_CTRL, val|0x40);
+    // All except external sensors
+    mpu9250_write(FIFO_EN, 0xf8);
+    vTaskDelay(1/portTICK_PERIOD_MS);
 }
 
 static void mpu9250_start(void)
@@ -212,8 +264,8 @@ static void mpu9250_start(void)
     mpu9250_write(PWR_MGMT_2, 0);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
-    // 1: Set LPF to 184Hz 0: No LPF
-    mpu9250_write(MPU_CONFIG, 0);
+    // bit0 1: Set LPF to 184Hz 0: No LPF, bit6 Stop if fifo full
+    mpu9250_write(MPU_CONFIG, (1<<6) | 1);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
     // Sample rate 1000Hz
@@ -232,19 +284,22 @@ static void mpu9250_start(void)
     mpu9250_write(ACCEL_CONFIG2, 1);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
+    uint8_t val;
     // INT enable on RDY
     mpu9250_write(INT_ENABLE, 1);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
-    uint8_t val = mpu9250_read(INT_PIN_CFG);
-    val |= 0x20;
+    val = mpu9250_read(INT_PIN_CFG);
+    val |= 0x30;
     mpu9250_write(INT_PIN_CFG, val);
     vTaskDelay(1/portTICK_PERIOD_MS);
 
-    // Enable DMP
+    // Looks that enabling DMP without blob causes continuous fifo sync errors
+#if 0
     val = mpu9250_read(USER_CTRL);
     mpu9250_write(USER_CTRL, val | (1<<7));
     vTaskDelay(1/portTICK_PERIOD_MS);
+#endif
 }
 
 static void slv0_readn(uint8_t reg, uint8_t size)
@@ -474,7 +529,7 @@ extern SemaphoreHandle_t send_sem;
 extern xQueueHandle ins_evt_queue;
 
 static xQueueHandle pkt_queue;
-#define PKT_QSIZE 16
+#define PKT_QSIZE 32
 
 static void imu_pkt_task(void *arg)
 {
@@ -549,6 +604,7 @@ void imu_task(void *arg)
     }
 
     mpu9250_start();
+    mpu9250_fifo_reset();
 
 #if defined(FIXUP_INS_OFFSET)
     fixup_ins_offsets();
@@ -581,103 +637,113 @@ void imu_task(void *arg)
     struct ak_sample akrx;
     struct B3packet pkt;
     int count = 0;
-    float gx, gy, gz, ax, ay, az, mx, my, mz;
+    float gx = 0, gy = 0, gz = 0, ax = 0, ay = 0, az = 0, mx, my, mz;
     float temp;
     float filtz = GRAVITY_MSS;
 
     while (1) {
         uint32_t gpio_num;
-        if (!xQueueReceive(ins_evt_queue, &gpio_num, portMAX_DELAY))
+        xQueueReceive(ins_evt_queue, &gpio_num, 1);
+        int fifo_count = mpu9250_fifo_count();
+        if (fifo_count == 0) {
+            //vTaskDelay(1 / portTICK_PERIOD_MS);
             continue;
-
-        if (!mpu9250_ready())
-            continue;
-
-#if 0
-        if (low_battery) {
-            // Sleep
-            mpu9250_write(PWR_MGMT_1, 0x40);
-            printf("low_battery: stop imu_task\n");
-            vTaskDelete(NULL);
         }
-#endif
-        mpu9250_read_sample(&rx);
 
-        // adjust and serialize floats into packet bytes
-        // skew accel/gyro frames so to match AK8963 NED frame
-        union { float f; uint8_t bytes[sizeof(float)];} ux, uy, uz;
+        int n_sample = fifo_count / sizeof(rx);
+        bool try_compass = false;
+
+        while(n_sample--) {
+            mpu9250_read_fifo(&rx);
+
+            int16_t t = be16_val(rx.d, 3);
+            //printf("temp %f\n", t/340.0+21);
+            if (!check_fifo(t)) {
+                mpu9250_fifo_reset();
+                printf("temp reset fifo %04x %d\n", t, fifo_count);
+                break;
+            }
+
+            // adjust and serialize floats into packet bytes
+            // skew accel/gyro frames so to match AK8963 NED frame
+            union { float f; uint8_t bytes[sizeof(float)];} ux, uy, uz;
 #if (ROTATION_YAW == 0)
-        ux.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
-        uy.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
-        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+            ux.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+            uy.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+            uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
 #elif (ROTATION_YAW == 90)
-        ux.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
-        uy.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
-        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+            ux.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+            uy.f = ((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+            uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
 #elif (ROTATION_YAW == 180)
-        ux.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
-        uy.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
-        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+            ux.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+            uy.f = -((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+            uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
 #elif (ROTATION_YAW == 270)
-        ux.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
-        uy.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
-        uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
+            ux.f = ((float)be16_val(rx.d, 0)) * MPU9250_ACCEL_SCALE_1G;
+            uy.f = -((float)be16_val(rx.d, 1)) * MPU9250_ACCEL_SCALE_1G;
+            uz.f = -((float)be16_val(rx.d, 2)) * MPU9250_ACCEL_SCALE_1G;
 #else
 #error "bad ROTATION_YAW value"
 #endif
 
-        union { float f; uint8_t bytes[sizeof(float)];} ut;
-        ut.f = ((float)be16_val(rx.d, 3)) * TEMP_SCALE + TEMP_OFFSET;
-        temp = ut.f;
+            union { float f; uint8_t bytes[sizeof(float)];} ut;
+            ut.f = ((float)be16_val(rx.d, 3)) * TEMP_SCALE + TEMP_OFFSET;
+            temp = ut.f;
 
-        ax = ux.f; ay = uy.f; az = uz.f;
+            ax = ux.f; ay = uy.f; az = uz.f;
 #if defined(FIXUP_INS_OFFSET)
-        ax += xa_offset + (temp - TEMP_OFFSET) * xa_offset_tc;
-        ay += ya_offset + (temp - TEMP_OFFSET) * ya_offset_tc;
-        az += za_offset + (temp - TEMP_OFFSET) * za_offset_tc;
-        ux.f = ax; uy.f = ay; uz.f = az;
+            ax += xa_offset + (temp - TEMP_OFFSET) * xa_offset_tc;
+            ay += ya_offset + (temp - TEMP_OFFSET) * ya_offset_tc;
+            az += za_offset + (temp - TEMP_OFFSET) * za_offset_tc;
+            ux.f = ax; uy.f = ay; uz.f = az;
 #endif
-        memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
-        memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
-        memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
+            memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
+            memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
+            memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
 #if (ROTATION_YAW == 0)
-        ux.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
-        uy.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
-        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+            ux.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+            uy.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+            uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
 #elif (ROTATION_YAW == 90)
-        ux.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
-        uy.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
-        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+            ux.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+            uy.f = ((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+            uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
 #elif (ROTATION_YAW == 180)
-        ux.f = -((float)be16_val(rx.d, 5)) * GYRO_SCALE;
-        uy.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
-        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+            ux.f = -((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+            uy.f = -((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+            uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
 #elif (ROTATION_YAW == 270)
-        ux.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
-        uy.f = -((float)be16_val(rx.d, 5)) * GYRO_SCALE;
-        uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
+            ux.f = ((float)be16_val(rx.d, 4)) * GYRO_SCALE;
+            uy.f = -((float)be16_val(rx.d, 5)) * GYRO_SCALE;
+            uz.f = -((float)be16_val(rx.d, 6)) * GYRO_SCALE;
 #else
 #error "bad ROTATION_YAW value"
 #endif
-        gx = ux.f; gy = uy.f; gz = uz.f;
+            gx = ux.f; gy = uy.f; gz = uz.f;
 #if defined(FIXUP_INS_OFFSET)
-        gx += (temp - TEMP_OFFSET) * xg_offset_tc;
-        gy += (temp - TEMP_OFFSET) * yg_offset_tc;
-        gz += (temp - TEMP_OFFSET) * zg_offset_tc;
-        ux.f = gx; uy.f = gy; uz.f = gz;
+            gx += (temp - TEMP_OFFSET) * xg_offset_tc;
+            gy += (temp - TEMP_OFFSET) * yg_offset_tc;
+            gz += (temp - TEMP_OFFSET) * zg_offset_tc;
+            ux.f = gx; uy.f = gy; uz.f = gz;
 #endif
-        memcpy(&pkt.data[12], ux.bytes, sizeof(ux));
-        memcpy(&pkt.data[16], uy.bytes, sizeof(uy));
-        memcpy(&pkt.data[20], uz.bytes, sizeof(uz));
-        memcpy(&pkt.data[24], ut.bytes, sizeof(ut));
+            memcpy(&pkt.data[12], ux.bytes, sizeof(ux));
+            memcpy(&pkt.data[16], uy.bytes, sizeof(uy));
+            memcpy(&pkt.data[20], uz.bytes, sizeof(uz));
+            memcpy(&pkt.data[24], ut.bytes, sizeof(ut));
 
-        pkt.head = B3HEADER;
-        pkt.tos = TOS_IMU;
-        if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
-            printf("fail to queue IMU packet\n");
+            pkt.head = B3HEADER;
+            pkt.tos = TOS_IMU;
+            if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
+                printf("fail to queue IMU packet\n");
+            }
+            if ((count++ % 10) == 0) {
+                try_compass = true;
+            }
+            MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
         }
 
-        if ((count++ % 10) == 0) {
+        if ((count++ % 10) == 0 || try_compass) {
             ak8963_read_sample(&akrx);
             // trigger next sampling of ak8963
             ak8963_read_sample_start();
@@ -748,6 +814,5 @@ void imu_task(void *arg)
                 maybe_landed = false;
             }
         }
-        MadgwickAHRSupdateIMU(gx, gy, gz, ax, ay, az);
     }
 }

@@ -204,7 +204,7 @@ static void spi_init(void)
         .command_bits=8,
         .address_bits=0,
         .dummy_bits=0,
-        .clock_speed_hz=1000000,                //Clock out at 1 MHz
+        .clock_speed_hz=8000000,                //Clock out at 8 MHz
         .duty_cycle_pos=128,
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
@@ -213,7 +213,8 @@ static void spi_init(void)
     };
 
     //Initialize the SPI bus
-    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 1);
+    // Sep/24/2017 SPI DMA gives corrupted data on MPU-9250 fifo access
+    ret=spi_bus_initialize(VSPI_HOST, &buscfg, 0);
     assert(ret==ESP_OK);
     //Attach the slave devices to the SPI bus
     ret=spi_bus_add_device(VSPI_HOST, &devcfg, &spi_baro);
