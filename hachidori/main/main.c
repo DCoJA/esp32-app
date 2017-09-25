@@ -310,6 +310,7 @@ volatile uint8_t rgb_led_blue;
 extern void baro_task(void *arg);
 extern void baro2_task(void *arg);
 extern void imu_task(void *arg);
+extern void imu_pkt_task(void *arg);
 extern void pwm_task(void *arg);
 extern void bat_task(void *arg);
 extern void fs_task(void *arg);
@@ -361,7 +362,8 @@ void app_main(void)
     param_queue = xQueueCreate(PARAM_QSIZE, B3SIZE);
 
     xTaskCreate(udp_task, "udp_task", 2048, NULL, 4, NULL);
-    xTaskCreate(imu_task, "imu_task", 2048, NULL, 11, NULL);
+    xTaskCreate(imu_task, "imu_task", 2048, NULL, 10, NULL);
+    xTaskCreate(imu_pkt_task, "imu_pkt_task", 2048, NULL, 9, NULL);
     xTaskCreate(baro_task, "baro_task", 2048, NULL, 9, NULL);
     //xTaskCreate(baro2_task, "baro2_task", 2048, NULL, 9, NULL);
     xTaskCreate(pwm_task, "pwm_task", 2048, NULL, 8, NULL);

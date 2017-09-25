@@ -26,6 +26,7 @@
 #include "MadgwickAHRS.h"
 #include "kfacc.h"
 #include "adjust.h"
+#include "compass.h"
 
 #include "pwm.h"
 #include "battery.h"
@@ -407,6 +408,7 @@ extern SemaphoreHandle_t nvs_sem;
 static float xg_offset_tc, yg_offset_tc, zg_offset_tc;
 static float xa_offset, ya_offset, za_offset;
 static float xa_offset_tc, ya_offset_tc, za_offset_tc;
+static float xm_offset, ym_offset, zm_offset;
 
 static void fixup_ins_offsets(void)
 {
@@ -420,6 +422,9 @@ static void fixup_ins_offsets(void)
     xa_offs.f = ya_offs.f = za_offs.f = 0;
     xg_offs_tc.f = yg_offs_tc.f = zg_offs_tc.f = 0;
     xa_offs_tc.f = ya_offs_tc.f = za_offs_tc.f = 0;
+
+    union { int32_t i; float f;} xm_offs, ym_offs, zm_offs;
+    xm_offs.f = ym_offs.f = zm_offs.f = 0;
 
     xSemaphoreTake(nvs_sem, portMAX_DELAY);
     err = nvs_open("storage", NVS_READONLY, &storage_handle);
@@ -475,6 +480,18 @@ static void fixup_ins_offsets(void)
         if (err == ESP_OK) {
             printf("%%za_offset_tc = %f\n", za_offs_tc.f);
         }
+        err = nvs_get_i32(storage_handle, "%xm_offset", &xm_offs.i);
+        if (err == ESP_OK) {
+            printf("%%xm_offset = %f\n", xm_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%ym_offset", &ym_offs.i);
+        if (err == ESP_OK) {
+            printf("%%ym_offset = %f\n", ym_offs.f);
+        }
+        err = nvs_get_i32(storage_handle, "%zm_offset", &zm_offs.i);
+        if (err == ESP_OK) {
+            printf("%%zm_offset = %f\n", zm_offs.f);
+        }
         nvs_close(storage_handle);
     }
     xSemaphoreGive(nvs_sem);
@@ -522,6 +539,9 @@ static void fixup_ins_offsets(void)
     xa_offset_tc = xa_offs_tc.f;
     ya_offset_tc = ya_offs_tc.f;
     za_offset_tc = za_offs_tc.f;
+    xm_offset = xm_offs.f;
+    ym_offset = ym_offs.f;
+    zm_offset = zm_offs.f;
 }
 
 extern int sockfd;
@@ -531,8 +551,14 @@ extern xQueueHandle ins_evt_queue;
 static xQueueHandle pkt_queue;
 #define PKT_QSIZE 32
 
-static void imu_pkt_task(void *arg)
+void imu_pkt_task(void *arg)
 {
+    while (sockfd < 0) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+
+    pkt_queue = xQueueCreate(PKT_QSIZE, sizeof(struct B3packet));
+
     struct B3packet pkt;
     while(1) {
         if (xQueueReceive(pkt_queue, &pkt, portMAX_DELAY) != pdTRUE)
@@ -552,12 +578,9 @@ bool maybe_landed = true;
 
 void imu_task(void *arg)
 {
-    while (sockfd < 0) {
+    while (!pkt_queue) {
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-
-    pkt_queue = xQueueCreate(PKT_QSIZE, sizeof(struct B3packet));
-    xTaskCreate(imu_pkt_task, "imu_pkt_task", 2048, NULL, 10, NULL);
 
     uint8_t rv;
     rv = mpu9250_read(WHO_IM_I);
@@ -632,6 +655,7 @@ void imu_task(void *arg)
     vTaskDelay(10/portTICK_PERIOD_MS);
 
     attitude_adjust_init();
+    compass_init();
 
     struct sample rx;
     struct ak_sample akrx;
@@ -775,19 +799,36 @@ void imu_task(void *arg)
 #error "bad ROTATION_YAW value"
 #endif
             mx = ux.f; my = uy.f; mz = uz.f;
-            memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
-            memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
-            memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
+#if defined(FIXUP_INS_OFFSET)
+            mx += xm_offset; my += ym_offset; mz += zm_offset;
+            ux.f = mx; uy.f = my; uz.f = mz;
+#endif
 
             pkt.head = B3HEADER;
             pkt.tos = TOS_MAG;
-            if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
-                printf("fail to queue MAG packet\n");
+            if (compass_mode == RAW) {
+                memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
+                memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
+                memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
+                if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
+                    printf("fail to queue MAG packet\n");
+                }
+            } else if (count >= FILTER_CONVERGE_COUNT) {
+                // COOKED or ZHINANCHE
+                ux.f = compass_x; uy.f = compass_y; uz.f = compass_z;
+                memcpy(&pkt.data[0], ux.bytes, sizeof(ux));
+                memcpy(&pkt.data[4], uy.bytes, sizeof(uy));
+                memcpy(&pkt.data[8], uz.bytes, sizeof(uz));
+                if (xQueueSend(pkt_queue, &pkt, 0) != pdTRUE) {
+                    printf("fail to queue MAG packet\n");
+                }
             }
             beta = (count++ < FILTER_CONVERGE_COUNT) ? 16.0f : 0.2f;
-            MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
+            if (compass_mode != ZHINANCHE)
+                MadgwickAHRSupdate(gx, gy, gz, ax, ay, az, mx, my, mz);
             KFACCupdate(ax, ay, az);
             attitude_adjust_compute();
+            compass_update();
 
             // DISARM on inversion or crash
             filtz = 0.9 * filtz + 0.1 * (-az);
