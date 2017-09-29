@@ -236,6 +236,9 @@ void baro_task(void* arg)
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 
+    // Wait 2 sec
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+
     esp_err_t ret;
     uint8_t id;
     ret = baro_readn(OMRON_2SMPB02_CHIP_ID, &id, 1);
