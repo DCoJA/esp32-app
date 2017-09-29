@@ -204,7 +204,7 @@ static void spi_init(void)
         .command_bits=8,
         .address_bits=0,
         .dummy_bits=0,
-        .clock_speed_hz=8000000,                //Clock out at 8 MHz
+        .clock_speed_hz=1000000,                //Clock out at 1 MHz
         .duty_cycle_pos=128,
         .mode=0,                                //SPI mode 0
         .spics_io_num=PIN_NUM_CS_A,             //CS pin
